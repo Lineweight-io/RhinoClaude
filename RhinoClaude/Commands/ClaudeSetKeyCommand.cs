@@ -38,7 +38,7 @@ namespace RhinoClaude.Commands
 
             // Save to plugin settings (persists across sessions)
             plugin.Settings.SetString("AnthropicApiKey", apiKey);
-            plugin.ClaudeService.SetApiKey(apiKey);
+            plugin.AnthropicClient.SetApiKey(apiKey);
 
             RhinoApp.WriteLine("RhinoClaude: API key saved successfully.");
             return Result.Success;

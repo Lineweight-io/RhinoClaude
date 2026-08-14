@@ -5,12 +5,15 @@
     <TargetFrameworks>net48;net7.0</TargetFrameworks>
     <RootNamespace>RhinoClaude</RootNamespace>
     <AssemblyName>RhinoClaude</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Your Name</Authors>
     <Description>Claude AI integration for Rhinoceros 3D</Description>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <OutputPath>bin\Build</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- C# 8+ is needed for switch expressions and pattern matching used in the agent code.
+         SDK-style net48 projects otherwise default to C# 7.3. -->
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <!-- Rhino 7 / Rhino 8 .NET Framework target -->
@@ -30,7 +33,7 @@
     Use the LOWEST Rhino version you want to support as the package version.
     - For net48: Use a Rhino 7.x version for Rhino 7 compatibility
     - For net7.0: Use a Rhino 8.x version for Rhino 8 .NET Core
-    
+
     Find versions at: https://www.nuget.org/packages/RhinoCommon
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
@@ -51,6 +54,15 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <!--
+    Roslyn scripting powers the Tier 2 escape hatch (run_rhinocommon_script).
+    4.8.0 targets netstandard2.0, so the same package version serves both TFMs.
+    Adds roughly 5 MB to the build output.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.8.0" />
   </ItemGroup>
 
 </Project>

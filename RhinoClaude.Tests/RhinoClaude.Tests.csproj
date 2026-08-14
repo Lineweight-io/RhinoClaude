@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net7.0 rather than the newest available: it matches the plugin's .NET Core target
+      and builds under a .NET 7, 8, or 9 SDK.
+    -->
+    <TargetFramework>net7.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>RhinoClaude.Tests</RootNamespace>
+    <AssemblyName>RhinoClaude.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="xunit" Version="2.7.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7" />
+  </ItemGroup>
+
+  <!--
+    The plugin assembly cannot be referenced directly: RhinoCommon is a compile-only
+    reference, so its types are unavailable at test runtime. Instead the RhinoCommon-free
+    parts of the agent core are linked in as source. Anything listed here must stay free
+    of `using Rhino…` — that constraint is exactly what keeps the protocol layer testable.
+  -->
+  <ItemGroup>
+    <Compile Include="..\RhinoClaude\Agent\AnthropicModels.cs" Link="Linked\AnthropicModels.cs" />
+    <Compile Include="..\RhinoClaude\Agent\SseParser.cs" Link="Linked\SseParser.cs" />
+    <Compile Include="..\RhinoClaude\Agent\StreamAccumulator.cs" Link="Linked\StreamAccumulator.cs" />
+    <Compile Include="..\RhinoClaude\Agent\CostBudget.cs" Link="Linked\CostBudget.cs" />
+    <Compile Include="..\RhinoClaude\Agent\UndoScope.cs" Link="Linked\UndoScope.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ToolContracts.cs" Link="Linked\ToolContracts.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ToolRegistry.cs" Link="Linked\ToolRegistry.cs" />
+    <Compile Include="..\RhinoClaude\Agent\JsonlLogger.cs" Link="Linked\JsonlLogger.cs" />
+  </ItemGroup>
+
+</Project>

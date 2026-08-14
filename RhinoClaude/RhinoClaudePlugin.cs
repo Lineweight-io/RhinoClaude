@@ -1,6 +1,7 @@
 using Rhino;
 using Rhino.PlugIns;
 using Rhino.UI;
+using RhinoClaude.Agent;
 using RhinoClaude.Services;
 using RhinoClaude.UI;
 
@@ -15,8 +16,8 @@ namespace RhinoClaude
         /// <summary>Singleton instance of the plugin.</summary>
         public static RhinoClaudePlugin Instance { get; private set; }
 
-        /// <summary>Shared Claude API service used by all commands.</summary>
-        public ClaudeApiService ClaudeService { get; private set; }
+        /// <summary>Streaming, tool-use-capable Anthropic client shared by every session.</summary>
+        public AnthropicClient AnthropicClient { get; private set; }
 
         /// <summary>Shared tag service for reading/writing semantic tags.</summary>
         public TagService TagService { get; private set; }
@@ -27,47 +28,58 @@ namespace RhinoClaude
         }
 
         /// <summary>
-        /// Called once when the plugin is first loaded.
-        /// Initializes services.
+        /// Called once when the plugin is first loaded. Initializes services and registers
+        /// both docked panels.
         /// </summary>
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
-            RhinoApp.WriteLine("RhinoClaude plugin loaded (Phase 3 — Auto-Modeling).");
+            RhinoApp.WriteLine("RhinoClaude plugin loaded (agent refactor — phase 1).");
 
-            // Initialize services
-            ClaudeService = new ClaudeApiService();
+            AnthropicClient = new AnthropicClient();
             TagService = new TagService();
 
-            // Try to load the API key from plugin settings
+            // Try plugin settings first, then the environment variable.
             string savedKey = Settings.GetString("AnthropicApiKey", string.Empty);
             if (!string.IsNullOrEmpty(savedKey))
             {
-                ClaudeService.SetApiKey(savedKey);
+                AnthropicClient.SetApiKey(savedKey);
                 RhinoApp.WriteLine("RhinoClaude: API key loaded from settings.");
             }
             else
             {
-                // Fall back to environment variable
                 string envKey = System.Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
                 if (!string.IsNullOrEmpty(envKey))
                 {
-                    ClaudeService.SetApiKey(envKey);
-                    RhinoApp.WriteLine("RhinoClaude: API key loaded from environment variable.");
+                    AnthropicClient.SetApiKey(envKey);
+                    RhinoApp.WriteLine("RhinoClaude: API key loaded from the ANTHROPIC_API_KEY environment variable.");
                 }
                 else
                 {
-                    RhinoApp.WriteLine("RhinoClaude: No API key found. Use 'ClaudeSetKey' command to set one.");
+                    RhinoApp.WriteLine("RhinoClaude: no API key found. Run 'ClaudeSetKey' to set one.");
                 }
             }
 
-            // Register the Tag Inspector docked panel
+            Panels.RegisterPanel(
+                this,
+                typeof(AgentChatPanel),
+                "RhinoClaude",
+                (System.Drawing.Icon)null);
+
             Panels.RegisterPanel(
                 this,
                 typeof(TagInspectorPanel),
                 "Tag Inspector",
                 (System.Drawing.Icon)null);
 
-            RhinoApp.WriteLine("RhinoClaude: Commands available — ClaudeAsk, ClaudeRunScript, ClaudeTag, RCSetTag, RCQuery, RCInspectTags, RCValidateTags, RCTagInspector, RCBuildFromDiagram");
+            // Drop the per-document agent host when its document closes, so a reopened
+            // document does not inherit a stale undo log.
+            RhinoDoc.CloseDocument += (sender, e) => AgentHost.Forget(e.DocumentSerialNumber);
+
+            RhinoApp.WriteLine(
+                "RhinoClaude: run 'ClaudeChat' to open the agent panel. " +
+                "Other commands — ClaudeSetKey, ClaudeTag, ClaudeRevertSession, " +
+                "RCSetTag, RCQuery, RCInspectTags, RCValidateTags, RCTagInspector, RCBuildFromDiagram");
+
             return LoadReturnCode.Success;
         }
     }

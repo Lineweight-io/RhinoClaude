@@ -1,135 +1,212 @@
 # RhinoClaude — Claude AI Plugin for Rhinoceros 3D
 
-A plugin that integrates Claude (by Anthropic) directly into Rhino, enabling you to ask questions, generate scripts, and get AI assistance with your 3D modeling workflow.
+An agent that works inside a live Rhino document. You describe what you want in a docked chat
+sidebar; Claude inspects the model, creates and edits geometry through a curated tool set,
+looks at what it built, and reports back — all inside a single undo group you can revert with
+one click.
 
-## Features (Phase 1)
+> **Status:** phase 1 of the agent refactor (see `AGENT_REFACTOR_PLAN.md`). The streaming
+> tool-use loop, the sidebar, a starter Tier 1 tool set, multi-shot view capture and the
+> Roslyn C# escape hatch are in. Self-review and the remaining Tier 1 tools come in later phases.
 
-- **ClaudeAsk** — Ask Claude questions from the Rhino command line, with optional scene context
-- **ClaudeRunScript** — Describe a task in plain English, Claude generates a Python script, and you can run it directly
-- **ClaudeSetKey** — Securely store your Anthropic API key in Rhino's plugin settings
-- **Scene Context** — Automatically sends information about your layers, objects, and selections to Claude
-- **Conversation History** — Multi-turn conversations that maintain context across queries
+## Features
+
+- **Docked chat sidebar** (`ClaudeChat`) — the primary interface. Streamed responses, inline
+  tool-call cards with input/result JSON, screenshot thumbnails, a live cost meter and
+  iteration counter, session dropdown, and a settings gear.
+- **Streaming tool-use loop** — SSE from the first request. Claude plans, calls tools, reads
+  the results, and iterates until it signals done or hits a guardrail.
+- **Guardrails** — $0.50 per turn and 25 iterations by default, both configurable. The loop
+  stops before the next model call rather than mid-mutation.
+- **One-click revert** — every mutation opens its own Rhino undo record; "Revert session"
+  (or `ClaudeRevertSession`) pops all of them.
+- **Vision** — `capture_views` is a 3D camera controller, not a screenshot button: named
+  views, explicit camera poses, orthographic/isometric presets, and orbit-from-current, up
+  to 6 shots returned from one call.
+- **C# escape hatch** — `run_rhinocommon_script` runs a snippet with full RhinoCommon access
+  inside an isolated undo record, with a timeout, a static-analysis blocklist, and a JSONL log.
+- **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
+  deterministic `RC*` commands are unchanged.
+
+### Tools registered in phase 1
+
+| Group | Tools |
+|---|---|
+| Query | `describe_document`, `list_layers`, `list_objects`, `get_object`, `get_selection` |
+| Layer | `ensure_layer`, `assign_objects_to_layer` |
+| Create | `create_box`, `create_line_curve` |
+| Modify | `translate_objects`, `delete_objects` |
+| View | `capture_views` |
+| Tier 2 | `run_rhinocommon_script` |
+| Meta | `signal_done` |
 
 ## Requirements
 
 - **Rhino 7** (Windows, .NET Framework 4.8) and/or **Rhino 8** (Windows, .NET 7)
-- **Visual Studio 2022** (Community edition is fine)
-- **.NET SDK** (for building)
-- **Anthropic API Key** — get one at [console.anthropic.com](https://console.anthropic.com)
+- **.NET SDK 7 or later** (for building)
+- **Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com)
 
-## Project Structure
+## Project structure
 
 ```
-RhinoClaude/
-├── RhinoClaude.sln              # Visual Studio solution
-└── RhinoClaude/
-    ├── RhinoClaude.csproj       # Project file (multi-targets net48 + net7.0)
-    ├── RhinoClaudePlugin.cs     # Main plugin entry point
-    ├── Properties/
-    │   └── AssemblyInfo.cs      # Assembly metadata
-    ├── Commands/
-    │   ├── ClaudeAskCommand.cs       # Ask Claude questions
-    │   ├── ClaudeSetKeyCommand.cs    # Configure API key
-    │   └── ClaudeRunScriptCommand.cs # Generate & run scripts
-    └── Services/
-        ├── ClaudeApiService.cs       # Anthropic API client
-        └── SceneContextCollector.cs  # Rhino scene → text context
+RhinoClaude.sln
+├── RhinoClaude/                     # the plugin
+│   ├── Agent/                       # protocol + loop (no RhinoCommon below AgentHost)
+│   │   ├── AnthropicModels.cs       #   wire format: content blocks, messages, requests
+│   │   ├── AnthropicClient.cs       #   HTTP + SSE streaming, retry/backoff
+│   │   ├── SseParser.cs             #   SSE framing
+│   │   ├── StreamAccumulator.cs     #   deltas → assembled message + usage
+│   │   ├── AgentSession.cs          #   the tool-use loop state machine
+│   │   ├── ToolRegistry.cs          #   tool definitions sent to Claude
+│   │   ├── ToolDispatcher.cs        #   resolve + run on Rhino's UI thread
+│   │   ├── CostBudget.cs            #   pricing table + per-turn guardrails
+│   │   ├── UndoScope.cs             #   undo-record RAII + session log
+│   │   ├── SystemPrompt.cs
+│   │   ├── AgentSettings.cs
+│   │   ├── JsonlLogger.cs
+│   │   └── AgentHost.cs             #   per-document object graph
+│   ├── Services/Agent/              # everything that touches RhinoCommon
+│   │   ├── RhinoQueryService.cs     #   read-only document access
+│   │   ├── RhinoMutationService.cs  #   writes, each in its own undo record
+│   │   ├── ViewCaptureService.cs    #   3D camera controller + multi-shot capture
+│   │   ├── ScriptExecutorService.cs #   Roslyn C# escape hatch
+│   │   └── SessionSnapshotService.cs#   session undo log + revert
+│   ├── Tools/Phase1Tools.cs         # schemas + handler wiring
+│   ├── UI/AgentChatPanel.cs         # the sidebar
+│   ├── UI/AgentSettingsDialog.cs
+│   ├── UI/TagInspectorPanel.cs      # unchanged
+│   ├── Commands/                    # ClaudeChat, ClaudeSetKey, ClaudeTag,
+│   │                                # ClaudeRevertSession, RC* tag commands,
+│   │                                # RCBuildFromDiagram
+│   ├── Schema/                      # TagSchema, BuildingStandards
+│   └── Services/                    # TagService, SceneContextCollector
+└── RhinoClaude.Tests/               # xunit; links the RhinoCommon-free sources
 ```
 
 ## Building
 
-1. **Clone or copy** this folder to your development machine.
+```
+dotnet build RhinoClaude.sln
+dotnet test  RhinoClaude.Tests/RhinoClaude.Tests.csproj
+```
 
-2. **Open** `RhinoClaude.sln` in Visual Studio 2022.
+Output lands in `RhinoClaude/bin/Build/`. The post-build step copies `RhinoClaude.dll` to
+`RhinoClaude.rhp`, which is what Rhino loads. Both target frameworks write to the same
+folder, so the `.rhp` there is whichever TFM built last — build the one matching your Rhino:
 
-3. **Restore NuGet packages** (should happen automatically):
-   - `RhinoCommon` — the Rhino SDK (compile-only, provided at runtime by Rhino)
-   - `System.Text.Json` — JSON serialization (for .NET Framework 4.8 target)
+```
+dotnet build RhinoClaude/RhinoClaude.csproj -f net48    # Rhino 7
+dotnet build RhinoClaude/RhinoClaude.csproj -f net7.0   # Rhino 8
+```
 
-4. **Build** the solution:
-   - For Rhino 7: build the `net48` target
-   - For Rhino 8: build the `net7.0-windows` target
-
-5. **Output**: The compiled plugin will be at:
-   ```
-   bin/Debug/net48/RhinoClaude.rhp        (Rhino 7)
-   bin/Debug/net7.0-windows/RhinoClaude.rhp  (Rhino 8)
-   ```
+The test project deliberately does not reference the plugin assembly. RhinoCommon is a
+compile-only reference, so its types are absent at test runtime; instead the RhinoCommon-free
+parts of the agent core are linked in as source. Anything listed in that `ItemGroup` must stay
+free of `using Rhino…`.
 
 ## Installation
 
-### Manual Install
-1. Build the project for your Rhino version.
-2. In Rhino, run `PlugInManager`.
-3. Click "Install" and browse to the `.rhp` file.
-4. Restart Rhino.
+Drag `RhinoClaude/bin/Build/RhinoClaude.rhp` into an open Rhino window, or run `PlugInManager`
+→ Install and browse to it. Restart Rhino.
 
-### Drag & Drop
-Simply drag the `.rhp` file into an open Rhino window.
+Rhino copies the `.rhp` into its own plugin folder on install, so rebuilding does not
+automatically update an installed copy — re-drag after a rebuild, or point Rhino at the build
+output directly.
 
 ## Setup
 
-1. **Set your API key** (only needed once — it's saved persistently):
-   ```
-   ClaudeSetKey
-   ```
-   Enter your Anthropic API key when prompted (starts with `sk-ant-`).
+```
+ClaudeSetKey
+```
 
-   Alternatively, set the `ANTHROPIC_API_KEY` environment variable.
+Enter your Anthropic API key (starts with `sk-ant-`). It is stored in the plugin's settings and
+persists across sessions. Alternatively set the `ANTHROPIC_API_KEY` environment variable —
+plugin settings win if both are present.
+
+`API_Key.txt` at the repo root is gitignored and is not read by the plugin. Use `ClaudeSetKey`
+or the environment variable.
 
 ## Usage
 
-### Ask Claude a Question
 ```
-ClaudeAsk
-```
-Type your question when prompted. Options:
-- **IncludeSceneContext** (Yes/No) — sends layer/object info to Claude
-- **ObjectScope** (All/SelectedOnly) — what objects to include in context
-- **ConversationHistory** (Keep/Clear) — maintain multi-turn conversation
-
-**Example:**
-```
-Command: ClaudeAsk
-Ask Claude: How do I create a lofted surface between these curves?
+ClaudeChat
 ```
 
-### Generate and Run a Script
-```
-ClaudeRunScript
-```
-Describe what you want in plain English. Claude generates a Python script,
-shows it to you for review, and asks for confirmation before running it.
+Opens the sidebar. Type a request and press Enter. If you have objects selected, tick
+"send with message" to pass their ids along so Claude prefers them over guessing.
 
-**Example:**
-```
-Command: ClaudeRunScript
-Describe what you want the script to do: Create a 10x10 grid of spheres with random radii between 0.5 and 2.0
-```
+While a turn runs:
+- **⏸ Stop** cancels. Any tool already dispatched finishes; nothing new fires.
+- The **cost meter** shows spend against the per-turn budget; click it for a per-iteration
+  breakdown. It turns amber past 60% and red past 90%.
+- **Tool cards** collapse by default. Click to see the exact input and result. Cards with
+  screenshots and cards that failed open automatically.
 
-Claude will generate the script, display it, and ask `Run / Cancel`.
+After a turn:
+- **↶ Revert session** undoes everything the session changed. It issues one Rhino undo step
+  per mutation, so hand edits made since the session started are undone too — the confirmation
+  dialog says so.
+- **⟲ New** starts a fresh conversation.
 
-## How It Works
+### Other commands
 
-1. **Scene Context**: When enabled, the plugin reads your Rhino document — layers, object types, selected geometry details (dimensions, curve lengths, face counts, etc.) — and sends that as context with your prompt.
+| Command | What it does |
+|---|---|
+| `ClaudeChat` | Open/focus the sidebar |
+| `ClaudeSetKey` | Store the API key |
+| `ClaudeTag` | Describe a selection in prose → structured `RC:` tags (still one-shot) |
+| `ClaudeRevertSession` | Same as the sidebar's revert button |
+| `RCSetTag`, `RCQuery`, `RCInspectTags`, `RCValidateTags`, `RCTagInspector` | Deterministic tag operations |
+| `RCBuildFromDiagram` | The algorithmic ADA restroom builder (no AI) |
 
-2. **Claude API**: Uses the Anthropic Messages API directly via HTTP (no SDK dependency). The system prompt tells Claude it's inside Rhino and should generate RhinoPython scripts.
+## Logs
 
-3. **Script Execution**: Generated Python scripts run through Rhino's built-in `PythonScript` engine, the same one that powers the `EditPythonScript` editor.
+Both are append-only JSONL under `%APPDATA%\RhinoClaude\`:
 
-## Roadmap
+- `script_log.jsonl` — every `run_rhinocommon_script` call: purpose, code, outcome, duration,
+  object deltas. This is the data source for deciding which scripts deserve promotion to a
+  curated Tier 1 tool.
+- `capture_log.jsonl` — every `capture_views` call: shot count and kinds, size, session and
+  iteration. Instrumentation for the screenshot-cadence question in the plan.
 
-- **Phase 2**: Richer scene context (materials, named views, block instances)
-- **Phase 3**: Iterative script refinement (Claude fixes errors and retries)
-- **Phase 4**: Docked UI chat panel with markdown rendering
-- **Phase 5**: Grasshopper component integration
+Screenshots are also cached to `%TEMP%\RhinoClaude\screenshots\<sessionId>\`.
+
+## Settings
+
+Behind the gear in the sidebar header:
+
+| Setting | Default |
+|---|---|
+| Loop model | `claude-sonnet-4-5-20250929` |
+| Cost budget per turn | $0.50 |
+| Max iterations per turn | 25 |
+| Max tokens per response | 16384 |
+| Script tool enabled | yes |
+| Script timeout | 15s (max 60s) |
+
+Model, budget, iteration and token changes apply to the next turn. Toggling the script tool
+changes the tool set, which is fixed for a session's lifetime — that one takes effect on the
+next **⟲ New** session.
 
 ## Troubleshooting
 
-- **"No API key configured"** — Run `ClaudeSetKey` and enter your key.
-- **"Network error"** — Check your internet connection and firewall settings.
-- **"Python scripting engine not available"** — Ensure IronPython is installed in Rhino (Rhino 7) or the script editor is available (Rhino 8).
-- **Script errors** — Review the generated script before running. Claude isn't perfect — review the code and use `Cancel` if something looks wrong.
+- **"No API key configured"** — run `ClaudeSetKey`.
+- **Authentication failed (401)** — the stored key is wrong or revoked; run `ClaudeSetKey` again.
+- **Rate limited (429)** — the client retries with backoff up to 3 times, honouring
+  `Retry-After`, then surfaces the error.
+- **"Budget reached"** — the turn stopped at the cost or iteration ceiling. Raise it in
+  settings, or send a narrower follow-up; the conversation is preserved.
+- **A tool failed** — expand its card. The error text is what Claude sees, so it is written to
+  be actionable rather than terse.
+- **Revert did less than expected** — revert issues one undo step per mutation. If you undid
+  something by hand mid-session, the counts drift.
+
+## Not in this phase
+
+Self-review (`SelfReviewService`, `ClaudeAddReviewView`), the remaining Tier 1 tools
+(booleans, `move_face`/`move_edge`, `scale_1d`, blocks, materials, arcs and circles),
+`run_rhino_command`, and per-document conversation persistence. See `AGENT_REFACTOR_PLAN.md`
+§9 for the phase order.
 
 ## License
 

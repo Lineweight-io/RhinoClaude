@@ -9,6 +9,7 @@ using Rhino.DocObjects;
 using Rhino.Input;
 using Rhino.Input.Custom;
 using Rhino.UI;
+using RhinoClaude.Agent;
 using RhinoClaude.Schema;
 using RhinoClaude.Services;
 
@@ -27,7 +28,7 @@ namespace RhinoClaude.Commands
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             var plugin = RhinoClaudePlugin.Instance;
-            if (!plugin.ClaudeService.IsConfigured)
+            if (!plugin.AnthropicClient.IsConfigured)
             {
                 RhinoApp.WriteLine("RhinoClaude: No API key configured. Run 'ClaudeSetKey' first.");
                 return Result.Failure;
@@ -86,7 +87,16 @@ namespace RhinoClaude.Commands
 
             try
             {
-                var task = plugin.ClaudeService.SendMessageAsync(tagPrompt, cancellationToken: cts.Token);
+                // Still one-shot: the output is small and structured, so the agent loop
+                // would only add latency. No tools, no streaming — just the tag JSON.
+                var request = new MessagesRequest
+                {
+                    Model = AgentSettings.DefaultLoopModel,
+                    MaxTokens = 1024,
+                    Messages = { AgentMessage.User(tagPrompt) }
+                };
+
+                var task = plugin.AnthropicClient.SendAsync(request, cts.Token);
                 while (!task.IsCompleted)
                 {
                     RhinoApp.Wait();
@@ -100,7 +110,12 @@ namespace RhinoClaude.Commands
                     return Result.Cancel;
                 }
 
-                response = task.Result;
+                response = task.Result.TextContent();
+            }
+            catch (AggregateException ex) when (ex.InnerException is AnthropicApiException apiEx)
+            {
+                RhinoApp.WriteLine("RhinoClaude Error: " + apiEx.Message);
+                return Result.Failure;
             }
             catch (AggregateException ex) when (ex.InnerException is OperationCanceledException)
             {
