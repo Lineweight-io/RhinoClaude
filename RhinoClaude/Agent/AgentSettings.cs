@@ -3,8 +3,9 @@ using System;
 namespace RhinoClaude.Agent
 {
     /// <summary>
-    /// Tunables surfaced behind the sidebar's settings gear. Defaults are the plan's
-    /// §8 decisions: Sonnet 4.5 for the loop, $0.50 per turn, 25 iterations.
+    /// Tunables surfaced behind the sidebar's settings gear. Defaults follow the plan's
+    /// §8 decisions — Sonnet for the loop, 25 iterations — with the per-turn ceiling
+    /// raised from the plan's $0.50 after live testing (see <see cref="MaxCostUsd"/>).
     /// </summary>
     public sealed class AgentSettings
     {
@@ -35,7 +36,15 @@ namespace RhinoClaude.Agent
         /// noticing it has gone wrong. 0 disables the defensive trigger.
         /// </summary>
         public int DefensiveReviewAfterIterations { get; set; } = 10;
-        public double MaxCostUsd { get; set; } = 0.50;
+        /// <summary>
+        /// Per-turn USD ceiling. The plan's $0.50 tripped after three iterations of read-only
+        /// tools on a real (1,918-object) floor plan — the whole scene is re-sent uncached on
+        /// every iteration, so input dominates. $2.00 covers a typical SD-scale request; the
+        /// sidebar's settings gear overrides it per user.
+        /// </summary>
+        public const double DefaultMaxCostUsd = 2.00;
+
+        public double MaxCostUsd { get; set; } = DefaultMaxCostUsd;
         public int MaxIterations { get; set; } = 25;
 
         /// <summary>

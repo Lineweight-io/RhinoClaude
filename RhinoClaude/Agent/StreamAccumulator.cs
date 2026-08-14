@@ -46,7 +46,11 @@ namespace RhinoClaude.Agent
         private readonly Dictionary<int, StringBuilder> _partialThinking = new Dictionary<int, StringBuilder>();
         private readonly Dictionary<int, StringBuilder> _partialSignature = new Dictionary<int, StringBuilder>();
 
-        /// <summary>Populated as <c>message_delta</c> events arrive.</summary>
+        /// <summary>
+        /// The turn's token usage. Both <c>message_start</c> and <c>message_delta</c> report
+        /// <em>cumulative</em> totals, so the two are merged field-by-field rather than summed
+        /// — see <see cref="ApplyUsage"/>.
+        /// </summary>
         public TokenUsage Usage { get; } = new TokenUsage();
 
         /// <summary><c>end_turn</c>, <c>tool_use</c>, <c>max_tokens</c>, …</summary>
@@ -116,7 +120,7 @@ namespace RhinoClaude.Agent
                             if (root.TryGetProperty("message", out var m) &&
                                 m.TryGetProperty("usage", out var u))
                             {
-                                Usage.Add(ReadUsage(u));
+                                ApplyUsage(u);
                             }
                             return new StreamNotification { Kind = StreamEventKind.MessageStart };
                         }
@@ -274,7 +278,7 @@ namespace RhinoClaude.Agent
                                 StopReason = sr.GetString();
                             }
                             if (root.TryGetProperty("usage", out var u2))
-                                Usage.Add(ReadUsage(u2));
+                                ApplyUsage(u2);
 
                             return new StreamNotification { Kind = StreamEventKind.MessageDelta };
                         }
@@ -316,20 +320,33 @@ namespace RhinoClaude.Agent
             }
         }
 
-        private static TokenUsage ReadUsage(JsonElement u)
+        /// <summary>
+        /// Merge one usage object off the stream into <see cref="Usage"/>.
+        ///
+        /// Every field the API reports is a running total for the whole message, on
+        /// <c>message_start</c> and <c>message_delta</c> alike — the docs are explicit that
+        /// "the token counts shown in the usage field of the message_delta event are
+        /// cumulative". <c>message_delta</c> repeats <c>input_tokens</c> and both cache pools
+        /// verbatim, so adding the two events together billed the whole input side twice.
+        /// Each field is therefore replaced, not accumulated; a field the event omits keeps
+        /// whatever was recorded before it.
+        /// </summary>
+        private void ApplyUsage(JsonElement u)
         {
-            return new TokenUsage
-            {
-                InputTokens = ReadInt(u, "input_tokens"),
-                OutputTokens = ReadInt(u, "output_tokens"),
-                CacheCreationInputTokens = ReadInt(u, "cache_creation_input_tokens"),
-                CacheReadInputTokens = ReadInt(u, "cache_read_input_tokens")
-            };
+            int value;
+            if (TryReadInt(u, "input_tokens", out value)) Usage.InputTokens = value;
+            if (TryReadInt(u, "output_tokens", out value)) Usage.OutputTokens = value;
+            if (TryReadInt(u, "cache_creation_input_tokens", out value)) Usage.CacheCreationInputTokens = value;
+            if (TryReadInt(u, "cache_read_input_tokens", out value)) Usage.CacheReadInputTokens = value;
         }
 
-        private static int ReadInt(JsonElement e, string name)
+        private static bool TryReadInt(JsonElement e, string name, out int value)
         {
-            return e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+            if (e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number)
+                return v.TryGetInt32(out value);
+
+            value = 0;
+            return false;
         }
 
         /// <summary>The assembled assistant turn, blocks in wire order.</summary>
