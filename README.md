@@ -5,12 +5,40 @@ sidebar; Claude inspects the model, creates and edits geometry through a curated
 looks at what it built, and reports back — all inside a single undo group you can revert with
 one click.
 
-> **Status: code-complete against `AGENT_REFACTOR_PLAN.md`** — every phase 0 through 10 is
-> implemented. Both target frameworks build with no warnings and 151 unit tests pass.
+> **Status: code-complete against `AGENT_REFACTOR_PLAN.md` (phases 0–10) and
+> `SEMANTIC_LAYER_PLAN.md` (phases A–I).** Both target frameworks build with no warnings and
+> 367 unit tests pass.
 >
 > **Nothing Rhino-facing has been run inside Rhino yet.** RhinoCommon is a compile-only
 > reference, so no test here touches a real document. See **`TESTING.md`** for the smoke-test
 > script to run first.
+
+## The semantic layer
+
+Beyond the raw geometry tools, the agent holds a mental model of the design **in the same terms
+the architect does**: masses, their faces and edges, and the openings cut into them.
+
+That framing comes from how Rhino actually gets used. Architects doing SD work do not draw floors,
+then walls on the floors, then a roof on the walls — that is the Revit workflow. They start with
+solid masses, push and pull faces to refine proportion, boolean-union masses that read as one
+form, and boolean-difference to cut light wells, recessed entries and window openings. So:
+
+- **Mass is the atom** — a solid Brep. Its function (Office, Residential, …) is a property of it,
+  not a different kind of thing.
+- **Facade, roof and floor are labels on faces**, applied at query time from the face's normal and
+  elevation. Nobody draws a facade in Rhino; a facade is a mass face that points sideways.
+- **An opening is a hole** someone subtracted, detected from the Brep's inner trim loops.
+- **Operations are first-class** — `push_pull_face`, `add_mass`, `subtract_mass`, `cut_opening`
+  are the verbs, because mass modelling *is* the SD workflow.
+
+**Start here: [`LAYER_CONVENTIONS.md`](LAYER_CONVENTIONS.md).** The one thing that matters is
+putting your masses on `MASS_*` layers — everything else is derived from the geometry. Or run
+`ClaudeLearnNamingConvention` and keep your firm's existing layer names.
+
+The classifier resolves in strict priority order: an explicit tag from `ClaudeSetElement`, then
+your learned convention, then the shipped canonical one, then geometry inference. Every result
+carries `classifiedBy`, and the agent is told to hedge on anything inferred from geometry alone —
+and to believe a screenshot over a semantic result when the two disagree.
 
 ## Features
 
@@ -36,7 +64,10 @@ one click.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tools (39)
+### Tools (63)
+
+**Raw geometry (39)** — the phase 1 set, unchanged. The semantic tools sit on top of these;
+nothing was replaced.
 
 | Group | Tools |
 |---|---|
@@ -64,6 +95,34 @@ Selection and viewport tools live in `RhinoInteractionService`, deliberately apa
 mutation service: Rhino does not put selection or camera changes on the undo stack, so wrapping
 them in undo records would inflate the count that "Revert session" pops and undo real geometry
 edits instead.
+
+**Semantic (24)** — 17 read, 7 write. Switchable off in settings, which gives the agent exactly
+the phase 1 tool set.
+
+| Group | Tools |
+|---|---|
+| Descriptive | `describe_massing`, `describe_context`, `find_element` |
+| Mass catalog | `list_masses`, `list_mass_groups`, `analyze_boolean_history` |
+| Face and edge | `get_mass_faces`, `get_face`, `get_mass_edges`, `check_face_relationships`, `find_openings_in_face` |
+| Envelope / program | `check_wall_window_ratio`, `get_roof_analysis`, `get_program_allocation`, `check_massing_composition`, `get_level_info` |
+| Constraints | `get_zoning_envelope` |
+| Massing operations | `push_pull_face`, `add_mass`, `subtract_mass`, `cut_opening`, `slice_mass_at_elevation`, `extrude_face_outward`, `fillet_edges`, `promote_opening_to_entry` |
+
+Every tool that operates on a face takes the same `FaceSelector` union — by id, by index, by
+orientation, by role, by role *and* orientation, optionally narrowed to an elevation band. So
+"pull the top face up 6 feet" is `push_pull_face(massId, {role: "roof"}, 6)` rather than a guessed
+face index, and "recess the ground-floor south face" is
+`push_pull_face(massId, {orientation: "S", elevationRange: [0, 12]}, -8)`.
+
+The semantic writes go through the same `RhinoMutationService` as the raw ones, one undo record
+per tool call — a `cut_opening` is a cutter solid, a boolean, a tag and a delete, and it undoes
+as one window rather than four steps.
+
+**Out of scope by design** (plan §2.2): wall assemblies, MEP, structural sizing, FF&E, detailed
+schedules, code checking beyond the zoning envelope, site engineering, daylight simulation,
+component families. The boundary is schematic design — if it wouldn't appear in a 30% SD
+deliverable, the semantic layer doesn't model it, and the raw tools plus the script hatch are
+there for the rest.
 
 ## Requirements
 
@@ -105,14 +164,47 @@ RhinoClaude.sln
 │   │   ├── SelfReviewService.cs     #   deterministic checks + reviewer call
 │   │   ├── AgentConversationStore.cs#   conversation storage in the .3dm
 │   │   └── RhinoCommandService.cs   #   Tier 3 scripted commands
+│   ├── Semantic/                    # the semantic core — deliberately Rhino-free
+│   │   ├── SemanticVocabulary.cs    #   the eleven element types and their enums
+│   │   ├── CanonicalConvention.cs   #   the shipped MASS_/OPENING_/SITE_ layer names
+│   │   ├── LayerConventionMap.cs    #   learned conventions + the resolution rule
+│   │   ├── SemanticModels.cs        #   Vec3/BoxView + every element view
+│   │   ├── UnitContext.cs           #   feet-declared thresholds → model units
+│   │   ├── ObjectClassifier.cs      #   the four-step rule, object level
+│   │   ├── FaceClassifier.cs        #   orientation + role from normal and elevation
+│   │   ├── EdgeClassifier.cs        #   parapet / corner / ridge / eave
+│   │   ├── OpeningClassifier.cs     #   subtype from dimensions
+│   │   ├── FaceSelector.cs          #   the selector unions + resolvers
+│   │   ├── CompositionAnalyzer.cs   #   sits-on / abuts / unioned-with, grouping
+│   │   ├── ElementQueryParser.cs    #   find_element's rules-based parser
+│   │   ├── MassingNarrator.cs       #   describe_massing's narrative
+│   │   ├── EnvelopeAnalytics.cs     #   WWR, roof form, program allocation
+│   │   ├── MassingComposition.cs    #   proportions, symmetry, hierarchy, booleans
+│   │   ├── FaceRelationships.cs     #   coplanar / parallel / perpendicular / flush
+│   │   ├── ZoningEnvelope.cs        #   height, setbacks, FAR
+│   │   └── GeometryMath.cs          #   PCA principal axes, symmetry scoring
+│   ├── Services/Semantic/           # the semantic layer's RhinoCommon half
+│   │   ├── SemanticClassifier.cs    #   doc → SemanticView (object level)
+│   │   ├── MassGeometryAnalyzer.cs  #   mass → MassGeometryView (geometry level)
+│   │   ├── ElementRegistry.cs       #   the two-tier cache + doc-event invalidation
+│   │   ├── SemanticQueryService.cs  #   the 17 read tools
+│   │   ├── SemanticMutationService.cs #  the 7 massing operations + entry promotion
+│   │   ├── BooleanHistoryReader.cs  #   Rhino history when it exists
+│   │   ├── LayerConventionStore.cs  #   doc-level and firm-level convention storage
+│   │   └── SemanticClassifierPrompt.cs # the LearnNamingConvention one-shot
 │   ├── Tools/                       # tool schemas + handler wiring
 │   │   ├── Phase1Tools.cs           #   query, create, transform, capture, script, done
-│   │   └── Tier1Tools.cs            #   the rest of the plan §3 inventory
+│   │   ├── Tier1Tools.cs            #   the rest of the plan §3 inventory
+│   │   ├── SemanticReadTools.cs     #   the 17 semantic reads
+│   │   ├── SemanticWriteTools.cs    #   the 8 semantic writes
+│   │   └── ToolInput.cs             #   shared argument reading
 │   ├── UI/AgentChatPanel.cs         # the sidebar
 │   ├── UI/AgentSettingsDialog.cs
 │   ├── UI/TagInspectorPanel.cs      # unchanged
 │   ├── Commands/                    # ClaudeChat, ClaudeSetKey, ClaudeTag,
 │   │                                # ClaudeRevertSession, ClaudeAddReviewView,
+│   │                                # ClaudeSetElement, ClaudeClearElement,
+│   │                                # ClaudeLearnNamingConvention,
 │   │                                # RC* tag commands, RCBuildFromDiagram
 │   ├── Schema/                      # TagSchema, BuildingStandards
 │   └── Services/                    # TagService, SceneContextCollector
@@ -199,18 +291,25 @@ After a turn:
 | `ClaudeTag` | Describe a selection in prose → structured `RC:` tags (still one-shot) |
 | `ClaudeRevertSession` | Same as the sidebar's revert button |
 | `ClaudeAddReviewView` | Stamp the current camera as `Claude:Review` for self-review to judge from |
+| `ClaudeSetElement` | Tag a selection as Mass / Opening / Overhang / MassGroup / Level / Site — beats every layer convention. Its `SetFaceRole` option labels a clicked face directly |
+| `ClaudeClearElement` | Remove semantic tags from a selection (leaves `RC:` tags alone) |
+| `ClaudeLearnNamingConvention` | Teach Claude your firm's layer names, and set the firm floor-to-floor |
 | `RCSetTag`, `RCQuery`, `RCInspectTags`, `RCValidateTags`, `RCTagInspector` | Deterministic tag operations |
 | `RCBuildFromDiagram` | The algorithmic ADA restroom builder (no AI) |
 
 ## Logs
 
-Both are append-only JSONL under `%APPDATA%\RhinoClaude\`:
+All append-only JSONL under `%APPDATA%\RhinoClaude\`:
 
 - `script_log.jsonl` — every `run_rhinocommon_script` call: purpose, code, outcome, duration,
   object deltas. This is the data source for deciding which scripts deserve promotion to a
   curated Tier 1 tool.
 - `capture_log.jsonl` — every `capture_views` call: shot count and kinds, size, session and
   iteration. Instrumentation for the screenshot-cadence question in the plan.
+- `classifier_timing.jsonl` — every classifier rebuild, both tiers: object-level duration with
+  mass and unclassified counts, and per-mass geometry duration with face, edge, opening and cut
+  counts. The budgets to watch are <150 ms object-level on a mid-scale model and <50 ms per mass;
+  the semantic plan's §6.3 fallbacks exist for when they are missed.
 
 Screenshots are also cached to `%TEMP%\RhinoClaude\screenshots\<sessionId>\`.
 
@@ -231,10 +330,16 @@ Behind the gear in the sidebar header:
 | Max tokens per response | 32000 |
 | Script tool enabled | yes |
 | Script timeout | 15s (max 60s) |
+| Semantic layer enabled | yes |
+| Firm floor-to-floor | 0 (unset) |
 
 Model, budget, iteration, token, effort and reasoning-display changes apply to the next turn.
-Toggling the script tool changes the tool set, which is fixed for a session's lifetime — that
-one takes effect on the next **⟲ New** session.
+Toggling the script tool or the semantic layer changes the tool set, which is fixed for a
+session's lifetime — those take effect on the next **⟲ New** session.
+
+**Firm floor-to-floor** is what inferred Levels are spaced at when nobody drew any, and what
+`check_massing_composition` measures vertical rhythm against. `ClaudeLearnNamingConvention` also
+asks for it, and either place sets the same value.
 
 **Effort** controls how much the model thinks and how hard it works. `high` is the API default;
 `xhigh` suits the hardest agentic work, `medium` is the cost-saving step down. It is greyed out
@@ -276,9 +381,12 @@ When the agent calls `signal_done`, the turn does not end straight away:
    geometry degenerate or invalid, are the bounding boxes a plausible size, did anything get
    stranded on the default layer, was a layer created and left empty, and (only when the
    request was about tagging) does everything have an `RC:ElementType`.
-2. The affected region is photographed from several angles — `Claude:Review` first if you
+2. With the semantic layer on, `check_massing_composition`'s facts go in too — envelope
+   proportions, symmetry, the mass hierarchy, the boolean composition, vertical rhythm. The
+   reviewer is being asked whether the massing works, and a screenshot alone makes that a guess.
+3. The affected region is photographed from several angles — `Claude:Review` first if you
    stamped one with `ClaudeAddReviewView`, then iso and plan framed on the session's geometry.
-3. Both go to a **separate, tool-less call on Opus 5**, constrained by JSON schema to
+4. All of it goes to a **separate, tool-less call on Opus 5**, constrained by JSON schema to
    `ship` / `iterate` / `ask_user`.
 
 The verdict *is* `signal_done`'s return value, so an `iterate` lands in the agent's context as
@@ -303,14 +411,24 @@ persistence and the guardrails. It also separates expected-and-harmless failures
 Unit tests cover what can be tested without Rhino — the SSE parser, delta assembly, content-block
 round-trips, model-capability request shaping, cost accounting, undo-scope correctness against a
 fake recorder, review parsing, compaction, persistence, and the conversation invariants the API
-enforces. **Everything that touches RhinoCommon is unverified**: geometry results, camera
-control, and undo behaviour all need a live session before they should be trusted.
+enforces.
+
+The semantic layer is deliberately structured so most of it falls on the testable side of that
+line. Everything under `RhinoClaude/Semantic/` is free of `using Rhino…` and operates on view
+models rather than Breps, so the classifier's resolution rule, face and edge labelling, opening
+subtype inference, selector resolution, the `find_element` parser, the narrative, and every
+analytical read tool — wall-window ratio, roof form, composition, zoning — all have tests.
+
+**Everything that touches RhinoCommon is unverified**: the Brep measurement that feeds those view
+models, geometry results, camera control, and undo behaviour all need a live session before they
+should be trusted.
 
 ## What's left
 
-Nothing from `AGENT_REFACTOR_PLAN.md` §9 — phases 0 through 10 are all implemented. What remains
-is verification inside Rhino, and then whatever `script_log.jsonl` says deserves promotion from
-the Tier 2 escape hatch into a curated Tier 1 tool.
+Nothing from `AGENT_REFACTOR_PLAN.md` §9 or `SEMANTIC_LAYER_PLAN.md` §9 — phases 0–10 and A–I are
+all implemented. What remains is verification inside Rhino, and then whatever `script_log.jsonl`
+and `classifier_timing.jsonl` say: which scripts deserve promotion from the Tier 2 escape hatch,
+and whether the classifier's cache tiers stay inside their budgets on a real project file.
 
 ## License
 

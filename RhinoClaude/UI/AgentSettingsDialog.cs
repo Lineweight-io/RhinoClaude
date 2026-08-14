@@ -23,6 +23,20 @@ namespace RhinoClaude.UI
         private readonly TextBox _scriptTimeout = new TextBox { Width = 80 };
         private readonly CheckBox _enableRhinoCommand = new CheckBox { Text = "Enable run_rhino_command (Tier 3 — scripted Rhino commands)" };
         private readonly CheckBox _enableReview = new CheckBox { Text = "Self-review when the agent signals done" };
+
+        private readonly CheckBox _enableSemantic = new CheckBox
+        {
+            Text = "Enable the semantic layer (massing, faces, openings — 24 extra tools)",
+            ToolTip = "Off gives the agent exactly the phase 1 raw geometry tools. " +
+                      "Takes effect on the next session."
+        };
+
+        private readonly TextBox _floorToFloor = new TextBox
+        {
+            Width = 90,
+            ToolTip = "Used when Levels are inferred rather than drawn. " +
+                      "ClaudeLearnNamingConvention sets this too."
+        };
         private readonly DropDown _reviewerModel = new DropDown { Width = 190 };
         private readonly TextBox _maxReviewCycles = new TextBox { Width = 80 };
 
@@ -60,6 +74,8 @@ namespace RhinoClaude.UI
             _enableScript.Checked = _settings.EnableScriptTool;
             _scriptTimeout.Text = _settings.ScriptTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
             _enableRhinoCommand.Checked = _settings.EnableRhinoCommandTool;
+            _enableSemantic.Checked = _settings.EnableSemanticTools;
+            _floorToFloor.Text = _settings.FloorToFloorDefault.ToString("0.###", CultureInfo.InvariantCulture);
             _enableRhinoCommand.ToolTip =
                 "Off by default. Scripted commands are non-atomic and undo less cleanly than the " +
                 "curated tools. The first use in a session raises a notice in the panel.";
@@ -90,6 +106,10 @@ namespace RhinoClaude.UI
             layout.AddRow(_enableRhinoCommand, null);
 
             layout.AddRow(Divider(), null);
+            layout.AddRow(_enableSemantic, null);
+            layout.AddRow(new Label { Text = "Firm floor-to-floor (model units, 0 = unset)", VerticalAlignment = VerticalAlignment.Center }, _floorToFloor);
+
+            layout.AddRow(Divider(), null);
             layout.AddRow(_enableReview, null);
             layout.AddRow(new Label { Text = "Reviewer model", VerticalAlignment = VerticalAlignment.Center }, _reviewerModel);
             layout.AddRow(new Label { Text = "Max review cycles per turn", VerticalAlignment = VerticalAlignment.Center }, _maxReviewCycles);
@@ -97,8 +117,9 @@ namespace RhinoClaude.UI
             layout.AddRow(Divider(), null);
             layout.AddRow(new Label
             {
-                Text = "Script log:  " + _settings.ScriptLogPath +
-                       "\nCapture log: " + _settings.CaptureLogPath,
+                Text = "Script log:     " + _settings.ScriptLogPath +
+                       "\nCapture log:    " + _settings.CaptureLogPath +
+                       "\nClassifier log: " + _settings.ClassifierLogPath,
                 Font = SystemFonts.Default(SystemFonts.Default().Size - 1),
                 TextColor = Color.FromArgb(130, 130, 130)
             }, null);
@@ -195,6 +216,16 @@ namespace RhinoClaude.UI
                 return;
             }
 
+            string floorToFloorText = (_floorToFloor.Text ?? string.Empty).Trim();
+            double floorToFloor = 0;
+            if (floorToFloorText.Length > 0
+                && (!double.TryParse(floorToFloorText, NumberStyles.Float, CultureInfo.InvariantCulture, out floorToFloor)
+                    || floorToFloor < 0))
+            {
+                MessageBox.Show(this, "Floor-to-floor must be a non-negative number, or 0 for unset.", "Invalid value");
+                return;
+            }
+
             _settings.LoopModel = _model.SelectedKey;
             _settings.ReviewerModel = _reviewerModel.SelectedKey;
             _settings.EnableSelfReview = _enableReview.Checked == true;
@@ -207,6 +238,8 @@ namespace RhinoClaude.UI
             _settings.EnableScriptTool = _enableScript.Checked == true;
             _settings.ScriptTimeoutSeconds = timeout;
             _settings.EnableRhinoCommandTool = _enableRhinoCommand.Checked == true;
+            _settings.EnableSemanticTools = _enableSemantic.Checked == true;
+            _settings.FloorToFloorDefault = floorToFloor;
 
             Close(_settings);
         }
