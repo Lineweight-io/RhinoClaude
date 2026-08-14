@@ -158,6 +158,9 @@ namespace RhinoClaude.Semantic
         public bool IsPlanar { get; set; }
         public double ElevationMin { get; set; }
         public double ElevationMax { get; set; }
+        /// <summary>The face's own extents. Unset on a hand-built view; <see cref="FaceFrame"/>
+        /// falls back to area and elevation when it is.</summary>
+        public BoxView Bbox { get; set; } = BoxView.Unset;
         /// <summary>planar | cylindrical | nurbs | …</summary>
         public string SurfaceType { get; set; } = "planar";
         public string ClassifiedBy { get; set; } = SemanticVocabulary.ByGeometryInference;

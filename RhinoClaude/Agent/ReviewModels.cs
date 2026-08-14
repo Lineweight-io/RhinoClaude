@@ -117,6 +117,11 @@ it built four walls and you see three, that is an iterate. Check proportion and 
 just presence. A deterministic check that failed is strong evidence but not automatically fatal;
 say why it does or does not matter.
 
+If the task was to modify an existing mass and the result contains new loose surfaces without
+modifying the original mass, note this as a factual observation — it is yours to weigh, not a
+rule: loose surfaces are the right answer for a canopy, an awning or a glazing panel, and the
+wrong one for a shape the mass itself should have taken.
+
 Prefer ship. Iterating costs the user time and money, so reserve it for something a reasonable
 architect would ask to have fixed before looking at the model themselves. Cosmetic preferences
 are not defects.";

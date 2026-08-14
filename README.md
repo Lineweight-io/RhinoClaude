@@ -111,6 +111,7 @@ the agent exactly the phase 1 tool set.
 | Envelope / program | `check_wall_window_ratio`, `get_roof_analysis`, `get_program_allocation`, `check_massing_composition`, `get_level_info` |
 | Constraints | `get_zoning_envelope` |
 | Massing operations | `push_pull_face`, `add_mass`, `subtract_mass`, `cut_opening`, `slice_mass_at_elevation`, `extrude_face_outward`, `fillet_edges`, `promote_opening_to_entry` |
+| Solid-preserving moves | `subdivide_face`, `move_face`, `move_edge`, `create_gable_roof` |
 
 Every tool that operates on a face takes the same `FaceSelector` union — by id, by index, by
 orientation, by role, by role *and* orientation, optionally narrowed to an elevation band. So
@@ -121,6 +122,13 @@ face index, and "recess the ground-floor south face" is
 The semantic writes go through the same `RhinoMutationService` as the raw ones, one undo record
 per tool call — a `cut_opening` is a cutter solid, a boolean, a tag and a delete, and it undoes
 as one window rather than four steps.
+
+Reshaping a mass keeps it a solid. `subdivide_face` splits one face of a closed Brep in two and
+hands back the id of the edge it created; `move_edge` then lifts that edge, and the box becomes
+a gable that is still one closed manifold. `create_gable_roof` composes the pair for the case
+that comes up most. Loose surfaces stay available — a canopy or a glazing panel is genuinely
+not part of the solid — but they are no longer the path of least resistance for a shape the
+mass itself should have taken.
 
 **Out of scope by design** (plan §2.2): wall assemblies, MEP, structural sizing, FF&E, detailed
 schedules, code checking beyond the zoning envelope, site engineering, daylight simulation,
