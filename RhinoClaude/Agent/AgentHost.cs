@@ -47,6 +47,10 @@ namespace RhinoClaude.Agent
             DocumentSerialNumber = doc.RuntimeSerialNumber;
             Settings = new AgentSettings();
 
+            // Provider, models, and API keys are firm-scope, so they are restored before any
+            // service that reads them is built.
+            LlmSettingsStore.Restore(Settings);
+
             Query = new RhinoQueryService(doc);
             Snapshots = new SessionSnapshotService(doc);
             Mutation = new RhinoMutationService(Query, Snapshots);
@@ -114,11 +118,17 @@ namespace RhinoClaude.Agent
         /// <summary>Sessions this document has had, most recent last — backs the header dropdown.</summary>
         public List<AgentSession> History { get; } = new List<AgentSession>();
 
+        /// <summary>Whichever provider <see cref="Settings"/> currently resolves to.</summary>
+        public ILlmClient Client { get; private set; }
+
         /// <summary>Start a fresh session, keeping settings and services.</summary>
         public AgentSession StartSession()
         {
-            var client = RhinoClaudePlugin.Instance?.AnthropicClient
-                         ?? throw new InvalidOperationException("The plugin is not initialised.");
+            var anthropic = RhinoClaudePlugin.Instance?.AnthropicClient
+                            ?? throw new InvalidOperationException("The plugin is not initialised.");
+
+            var client = LlmClientFactory.Create(Settings, anthropic);
+            Client = client;
 
             var sessionId = Guid.NewGuid();
 
@@ -164,11 +174,22 @@ namespace RhinoClaude.Agent
             return Session;
         }
 
-        /// <summary>Re-register tools after a settings change (model, budget, script toggle).</summary>
+        /// <summary>Re-register tools after a settings change (provider, model, budget, script toggle).</summary>
         public void ApplySettings()
         {
             Script.DefaultTimeoutSeconds = Settings.ScriptTimeoutSeconds;
             Review.ReviewerModel = Settings.ReviewerModel;
+
+            // A provider or key change rebuilds the client. Cheap — the HttpClient behind it is
+            // static — and it means a corrected API key takes effect without a new session.
+            var anthropic = RhinoClaudePlugin.Instance?.AnthropicClient;
+            if (anthropic != null)
+            {
+                Client = LlmClientFactory.Create(Settings, anthropic);
+                Review.UseClient(Client);
+                if (Session != null && !Session.IsRunning) Session.Client = Client;
+            }
+
             if (Session != null) WireReview(Session);
 
             var current = Session;
@@ -210,8 +231,13 @@ namespace RhinoClaude.Agent
                     () => Review.CollectFacts(session.LastUserMessage, summary, expectedOutcome, 0))
                     .ConfigureAwait(false);
 
-                var captures = await ToolDispatcher.RunOnUiThreadAsync(
-                    () => Review.CaptureForReview(0)).ConfigureAwait(false);
+                // Four viewport captures take real time. On a text-only provider they would be
+                // dropped in translation anyway, so do not take them at all — the reviewer runs
+                // on the deterministic checks alone there.
+                var captures = Client != null && !Client.AcceptsImages
+                    ? new List<CaptureResult>()
+                    : await ToolDispatcher.RunOnUiThreadAsync(
+                        () => Review.CaptureForReview(0)).ConfigureAwait(false);
 
                 return await Review.ReviewAsync(facts, captures, token).ConfigureAwait(false);
             };

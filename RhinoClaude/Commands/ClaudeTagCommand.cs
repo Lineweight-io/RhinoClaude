@@ -27,10 +27,14 @@ namespace RhinoClaude.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var plugin = RhinoClaudePlugin.Instance;
-            if (!plugin.AnthropicClient.IsConfigured)
+            // Runs on whichever provider the panel is set to, at that provider's loop model.
+            var host = AgentHost.For(doc);
+            var client = host.Client;
+            if (client == null || !client.IsConfigured)
             {
-                RhinoApp.WriteLine("RhinoClaude: No API key configured. Run 'ClaudeSetKey' first.");
+                RhinoApp.WriteLine(client == null || client is AnthropicClient
+                    ? "RhinoClaude: No API key configured. Run 'ClaudeSetKey' first."
+                    : "RhinoClaude: no API key configured for " + client.ProviderName + ".");
                 return Result.Failure;
             }
 
@@ -95,7 +99,7 @@ namespace RhinoClaude.Commands
                 // would burn the whole allowance before the JSON was written.
                 var request = new MessagesRequest
                 {
-                    Model = AgentSettings.DefaultUtilityModel,
+                    Model = host.Settings.LoopModel,
                     MaxTokens = 2048,
                     Messages = { AgentMessage.User(tagPrompt) }
                 };
@@ -105,7 +109,7 @@ namespace RhinoClaude.Commands
                 if (ModelCapabilities.SupportsEffort(request.Model))
                     request.OutputConfig = new OutputConfig { Effort = "low" };
 
-                var task = plugin.AnthropicClient.SendAsync(request, cts.Token);
+                var task = client.SendAsync(request, cts.Token);
                 while (!task.IsCompleted)
                 {
                     RhinoApp.Wait();
@@ -180,7 +184,7 @@ namespace RhinoClaude.Commands
             }
 
             // ── Step 9: Write tags to all selected objects ───────────
-            var tagService = plugin.TagService;
+            var tagService = RhinoClaudePlugin.Instance.TagService;
             int successCount = 0;
             var allErrors = new List<string>();
 

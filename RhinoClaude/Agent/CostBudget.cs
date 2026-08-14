@@ -79,27 +79,69 @@ namespace RhinoClaude.Agent
             // List price with no promotional period — cache write $1.25, cache read $0.10.
             Rate("claude-haiku-4-5",  1.00,  5.00),
             Rate("claude-fable-5",   10.00, 50.00),
+
+            // ── OpenAI-compatible providers ───────────────────────────
+            //
+            // These do not bill a cache write — they cache implicitly — so the write rate is
+            // the plain input rate and the read rate is quoted directly rather than derived.
+            // Every figure below was taken from the provider's own pricing page on 2026-08-14
+            // and will go stale; the URL on each block is where to re-check it.
+            //
+            // https://api-docs.deepseek.com/quick_start/pricing
+            // DeepSeek moved to peak / off-peak billing on 2026-08-16, with off-peak at half
+            // these rates. Only the peak rate is encoded, so an off-peak turn over-reports by 2x
+            // — the safe direction for a budget ceiling.
+            Rate("deepseek-v4-flash", 0.14, 0.28,  cacheRead: 0.0028),
+            Rate("deepseek-v4-pro",   0.435, 0.87, cacheRead: 0.003625),
+            Rate("deepseek",          0.435, 0.87, cacheRead: 0.003625),   // unknown DeepSeek id
+
+            // https://platform.kimi.ai/docs/pricing/chat
+            Rate("kimi-k2.5",         0.60, 3.00,  cacheRead: 0.10),
+            Rate("kimi-k2.6",         0.95, 4.00,  cacheRead: 0.16),
+            Rate("kimi-k2.7",         0.95, 4.00,  cacheRead: 0.19),
+            Rate("kimi-k3",           3.00, 15.00, cacheRead: 0.30),
+            Rate("kimi",              3.00, 15.00, cacheRead: 0.30),       // unknown Kimi id
+            Rate("moonshot",          3.00, 15.00, cacheRead: 0.30),
+
+            // https://www.alibabacloud.com/help/en/model-studio/models  (International/Singapore)
+            Rate("qwen-plus",         0.40, 1.20,  cacheRead: 0.04),
+            Rate("qwen3.7-flash",     0.03, 0.13,  cacheRead: 0.003),
+            Rate("qwen3.7-max",       2.00, 6.00,  cacheRead: 0.20,
+                                      introInput: 1.25, introOutput: 3.75,
+                                      introThroughUtc: new DateTime(2026, 12, 31)),
+            Rate("qwen3.8-max",       2.00, 6.00,  cacheRead: 0.20),
+            Rate("qwen",              2.00, 6.00,  cacheRead: 0.20),       // unknown Qwen id
+
+            // Local models cost nothing to call.
+            Rate("ollama",            0.00, 0.00,  cacheRead: 0.0),
         };
 
         private static RateEntry Rate(
             string prefix, double input, double output,
-            double introInput = 0, double introOutput = 0, DateTime introThroughUtc = default(DateTime))
+            double introInput = 0, double introOutput = 0, DateTime introThroughUtc = default(DateTime),
+            double cacheRead = -1)
         {
             return new RateEntry
             {
                 Prefix = prefix,
-                List = Pricing(input, output),
-                Intro = introInput > 0 ? Pricing(introInput, introOutput) : null,
+                List = Pricing(input, output, cacheRead),
+                Intro = introInput > 0 ? Pricing(introInput, introOutput, cacheRead) : null,
                 IntroThroughUtc = introThroughUtc
             };
         }
 
-        private static ModelPricing Pricing(double input, double output) => new ModelPricing
+        /// <summary>
+        /// Rates for one model. <paramref name="cacheRead"/> below zero means "derive it the
+        /// Anthropic way" — 0.1x input for a read, 1.25x for a write. A provider that quotes its
+        /// own cache-hit price passes it explicitly, and its write rate is the plain input rate,
+        /// because none of the OpenAI-compatible providers bill for populating a cache.
+        /// </summary>
+        private static ModelPricing Pricing(double input, double output, double cacheRead = -1) => new ModelPricing
         {
             InputPerMTok = input,
             OutputPerMTok = output,
-            CacheWritePerMTok = input * CacheWriteMultiplier,
-            CacheReadPerMTok = input * CacheReadMultiplier
+            CacheWritePerMTok = cacheRead < 0 ? input * CacheWriteMultiplier : input,
+            CacheReadPerMTok = cacheRead < 0 ? input * CacheReadMultiplier : cacheRead
         };
 
         /// <summary>Falls back to Sonnet-tier rates for an unrecognised model id.</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace RhinoClaude.Agent
 {
@@ -39,6 +40,110 @@ namespace RhinoClaude.Agent
 
         public string LoopModel { get; set; } = DefaultLoopModel;
         public string ReviewerModel { get; set; } = DefaultReviewerModel;
+
+        // ── Provider selection ────────────────────────────────────────
+
+        /// <summary>
+        /// Which service the loop talks to. Anthropic is the default and nothing about that
+        /// path changes; the rest go through <see cref="OpenAiCompatibleClient"/>.
+        /// </summary>
+        public LlmProvider Provider { get; set; } = LlmProviderCatalog.Default;
+
+        /// <summary>Base URL for <see cref="LlmProvider.OpenAiCompatibleCustom"/>. Ignored otherwise.</summary>
+        public string CustomEndpoint { get; set; }
+
+        /// <summary>
+        /// API keys, one per provider. Kept separate so switching back and forth does not make
+        /// the user re-paste a key, and so a leaked key belongs to exactly one service.
+        /// </summary>
+        private readonly Dictionary<LlmProvider, string> _apiKeys = new Dictionary<LlmProvider, string>();
+
+        /// <summary>Loop and reviewer model last chosen for each provider.</summary>
+        private readonly Dictionary<LlmProvider, string> _loopModels = new Dictionary<LlmProvider, string>();
+        private readonly Dictionary<LlmProvider, string> _reviewerModels = new Dictionary<LlmProvider, string>();
+
+        public string ApiKeyFor(LlmProvider provider) =>
+            _apiKeys.TryGetValue(provider, out var key) ? key : null;
+
+        public void SetApiKey(LlmProvider provider, string apiKey)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey)) _apiKeys.Remove(provider);
+            else _apiKeys[provider] = apiKey.Trim();
+        }
+
+        /// <summary>The key for the provider currently selected.</summary>
+        public string ActiveApiKey => ApiKeyFor(Provider);
+
+        /// <summary>
+        /// The endpoint actually used: the typed-in URL for the custom provider, the catalog's
+        /// otherwise.
+        /// </summary>
+        public string ActiveEndpoint
+        {
+            get
+            {
+                var info = LlmProviderCatalog.Get(Provider);
+                return info.NeedsCustomEndpoint
+                    ? (CustomEndpoint ?? string.Empty).Trim()
+                    : info.BaseUrl;
+            }
+        }
+
+        /// <summary>
+        /// Switch provider, remembering the models chosen for the old one and restoring (or
+        /// defaulting) the models for the new one. Called by the settings dialog rather than
+        /// setting <see cref="Provider"/> directly, so a switch never leaves a Claude model id
+        /// pointed at DeepSeek.
+        /// </summary>
+        public void SelectProvider(LlmProvider provider)
+        {
+            if (provider == Provider) return;
+
+            _loopModels[Provider] = LoopModel;
+            _reviewerModels[Provider] = ReviewerModel;
+
+            Provider = provider;
+            var info = LlmProviderCatalog.Get(provider);
+
+            LoopModel = _loopModels.TryGetValue(provider, out var loop) && !string.IsNullOrWhiteSpace(loop)
+                ? loop
+                : info.DefaultLoopModel;
+
+            ReviewerModel = _reviewerModels.TryGetValue(provider, out var reviewer) && !string.IsNullOrWhiteSpace(reviewer)
+                ? reviewer
+                : info.DefaultReviewerModel;
+        }
+
+        /// <summary>
+        /// Copy the whole provider block across. The settings dialog edits a clone, so this is
+        /// how an accepted edit reaches the host's live settings object.
+        /// </summary>
+        public void AdoptProviderSettings(AgentSettings other)
+        {
+            if (other == null) return;
+
+            Provider = other.Provider;
+            CustomEndpoint = other.CustomEndpoint;
+
+            _apiKeys.Clear();
+            foreach (var pair in other._apiKeys) _apiKeys[pair.Key] = pair.Value;
+
+            _loopModels.Clear();
+            foreach (var pair in other._loopModels) _loopModels[pair.Key] = pair.Value;
+
+            _reviewerModels.Clear();
+            foreach (var pair in other._reviewerModels) _reviewerModels[pair.Key] = pair.Value;
+        }
+
+        /// <summary>Models remembered per provider — persisted so a switch back is a no-op.</summary>
+        public IReadOnlyDictionary<LlmProvider, string> RememberedLoopModels => _loopModels;
+        public IReadOnlyDictionary<LlmProvider, string> RememberedReviewerModels => _reviewerModels;
+
+        public void RememberModels(LlmProvider provider, string loopModel, string reviewerModel)
+        {
+            if (!string.IsNullOrWhiteSpace(loopModel)) _loopModels[provider] = loopModel;
+            if (!string.IsNullOrWhiteSpace(reviewerModel)) _reviewerModels[provider] = reviewerModel;
+        }
 
         /// <summary>Run self-review when the agent calls signal_done.</summary>
         public bool EnableSelfReview { get; set; } = true;
@@ -131,10 +236,21 @@ namespace RhinoClaude.Agent
             ClassifierLogPath = System.IO.Path.Combine(JsonlLogger.DefaultDirectory, "classifier_timing.jsonl");
         }
 
-        public AgentSettings Clone() => new AgentSettings
+        public AgentSettings Clone()
+        {
+            var copy = CloneScalars();
+            foreach (var pair in _apiKeys) copy._apiKeys[pair.Key] = pair.Value;
+            foreach (var pair in _loopModels) copy._loopModels[pair.Key] = pair.Value;
+            foreach (var pair in _reviewerModels) copy._reviewerModels[pair.Key] = pair.Value;
+            return copy;
+        }
+
+        private AgentSettings CloneScalars() => new AgentSettings
         {
             LoopModel = LoopModel,
             ReviewerModel = ReviewerModel,
+            Provider = Provider,
+            CustomEndpoint = CustomEndpoint,
             EnableSelfReview = EnableSelfReview,
             MaxReviewCycles = MaxReviewCycles,
             DefensiveReviewAfterIterations = DefensiveReviewAfterIterations,
