@@ -141,6 +141,23 @@ namespace RhinoClaude.Agent
     }
 
     /// <summary>
+    /// Outcome of one tool invocation, with the timing the sidebar shows on the card.
+    ///
+    /// Lives here rather than beside the dispatcher that produces it because it is a plain
+    /// record of what happened — the sidebar renders it, the conversation export formats it,
+    /// and neither of those wants RhinoCommon in scope to read it.
+    /// </summary>
+    public sealed class ToolInvocation
+    {
+        public string ToolUseId { get; set; }
+        public string ToolName { get; set; }
+        public string InputJson { get; set; }
+        public ToolResult Result { get; set; }
+        public long ElapsedMs { get; set; }
+        public bool TerminatesTurn { get; set; }
+    }
+
+    /// <summary>
     /// A registered tool: what Claude sees (name / description / schema) plus the delegate
     /// that runs it. The handler is always invoked on Rhino's UI thread by the dispatcher.
     /// </summary>

@@ -80,6 +80,34 @@ namespace RhinoClaude.Agent
             return created.Where(id => !deleted.Contains(id)).Distinct().ToList();
         }
 
+        /// <summary>
+        /// Everything the agent is responsible for that is still in the document: what it
+        /// created plus what it edited in place, minus anything it later deleted.
+        ///
+        /// This is the set the "export result" button writes out. It is deliberately wider
+        /// than <see cref="SurvivingCreatedIds"/> — an object the agent moved, re-layered or
+        /// re-tagged belongs in a review file even though the agent did not make it. Order is
+        /// first-touched-first, so the export reads in the order the agent worked.
+        /// </summary>
+        public List<string> SurvivingTouchedIds(int mark = 0)
+        {
+            var touched = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var deleted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var mutation in Since(mark))
+            {
+                foreach (var id in mutation.CreatedIds.Concat(mutation.ModifiedIds))
+                {
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+                    if (seen.Add(id)) touched.Add(id);
+                }
+                foreach (var id in mutation.DeletedIds) deleted.Add(id);
+            }
+
+            return touched.Where(id => !deleted.Contains(id)).ToList();
+        }
+
         public List<string> LayersTouched(int mark = 0)
         {
             return Since(mark)

@@ -238,6 +238,8 @@ namespace RhinoClaude.Services.Agent
                         moved?.Geometry?.GetBoundingBox(true) ?? BoundingBox.Unset);
                 }
 
+                NoteModified(updatedIds);
+
                 var result = new Dictionary<string, object>
                 {
                     { "updatedIds", updatedIds },
@@ -735,6 +737,8 @@ namespace RhinoClaude.Services.Agent
                         throw new InvalidOperationException("Rhino refused to set the material on object " + obj.Id + ".");
                     updatedIds.Add(obj.Id.ToString());
                 }
+
+                NoteModified(updatedIds);
 
                 return (object)new Dictionary<string, object>
                 {

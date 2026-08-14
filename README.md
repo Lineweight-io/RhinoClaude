@@ -52,6 +52,9 @@ and to believe a screenshot over a semantic result when the two disagree.
   stops before the next model call rather than mid-mutation.
 - **One-click revert** — every mutation opens its own Rhino undo record; "Revert session"
   (or `ClaudeRevertSession`) pops all of them.
+- **Review exports** — one button writes the conversation as shareable markdown (messages,
+  tool calls, timing, cost); another writes just the objects the agent created or changed to
+  a separate .3dm.
 - **Vision** — `capture_views` is a 3D camera controller, not a screenshot button: named
   views, explicit camera poses, orthographic/isometric presets, and orbit-from-current, up
   to 6 shots returned from one call.
@@ -153,6 +156,8 @@ RhinoClaude.sln
 │   │   ├── SessionMutationLog.cs    #   what the agent actually changed
 │   │   ├── HistoryCompactor.cs      #   shrink old tool results (risk #6)
 │   │   ├── ConversationSnapshot.cs  #   persisted conversation format
+│   │   ├── ConversationExport.cs    #   session → shareable markdown
+│   │   ├── ExportNaming.cs          #   export filename rules
 │   │   ├── ModelCapabilities.cs     #   per-model request shaping
 │   │   └── AgentHost.cs             #   per-document object graph
 │   ├── Services/Agent/              # everything that touches RhinoCommon
@@ -164,6 +169,7 @@ RhinoClaude.sln
 │   │   ├── RhinoInteractionService.cs # selection + viewport (no undo record)
 │   │   ├── SelfReviewService.cs     #   deterministic checks + reviewer call
 │   │   ├── AgentConversationStore.cs#   conversation storage in the .3dm
+│   │   ├── SessionExportService.cs  #   markdown + selected-objects .3dm exports
 │   │   └── RhinoCommandService.cs   #   Tier 3 scripted commands
 │   ├── Semantic/                    # the semantic core — deliberately Rhino-free
 │   │   ├── SemanticVocabulary.cs    #   the eleven element types and their enums
@@ -282,6 +288,29 @@ After a turn:
   per mutation, so hand edits made since the session started are undone too — the confirmation
   dialog says so.
 - **⟲ New** starts a fresh conversation.
+
+### Exporting for review
+
+A second button row under the session controls turns a session into something you can hand
+to someone who does not have Rhino open. Both buttons are disabled, with a tooltip saying
+why, until there is something to export.
+
+- **⭳ Export chat…** writes the conversation as markdown: every user turn, every answer,
+  every tool call with its arguments and result, per-call timing, the token totals and the
+  estimated cost, plus a summary of what the agent changed in the document. Screenshots are
+  noted but not embedded. Suggested name
+  `RhinoClaude_conversation_{docname}_{yyyyMMdd_HHmm}.md`. It exports whichever session the
+  header dropdown is showing; for a session restored from the .3dm, tool results come from
+  the saved conversation and timings are marked as not saved.
+- **⭳ Export result…** writes just the objects the agent created or changed this session to a
+  standalone .3dm, so a reviewer opens the agent's work rather than the whole model. The set
+  comes from the session mutation log — everything created or edited in place, minus anything
+  the agent later deleted. Rhino's own writer does the work, so layers, materials and block
+  definitions come across. Suggested name `RhinoClaude_result_{docname}_{yyyyMMdd_HHmm}.3dm`.
+  The working .3dm is never overwritten: picking its own path is refused.
+
+Both save through the standard Windows save dialog, opening next to the .3dm when it has
+been saved and on the Desktop when it has not.
 
 ### Other commands
 

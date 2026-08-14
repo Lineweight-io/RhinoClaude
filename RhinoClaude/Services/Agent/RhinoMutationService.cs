@@ -88,9 +88,31 @@ namespace RhinoClaude.Services.Agent
             mutation.CreatedIds.AddRange(after.Except(before).Select(g => g.ToString()));
             mutation.DeletedIds.AddRange(before.Except(after).Select(g => g.ToString()));
 
+            // Ids the tool edited in place. The id delta cannot see these — the object is the
+            // same object before and after — so the tool has to say so itself.
+            foreach (var id in DrainPendingModified())
+            {
+                if (mutation.CreatedIds.Contains(id) || mutation.DeletedIds.Contains(id)) continue;
+                if (!mutation.ModifiedIds.Contains(id)) mutation.ModifiedIds.Add(id);
+            }
+
             var box = BoundingBox.Unset;
             foreach (var id in after.Except(before))
             {
+                var obj = doc.Objects.FindId(id);
+                if (obj?.Geometry == null) continue;
+
+                var objectBox = obj.Geometry.GetBoundingBox(true);
+                if (objectBox.IsValid) box.Union(objectBox);
+
+                var layer = doc.Layers[obj.Attributes.LayerIndex];
+                if (layer != null && !mutation.LayersTouched.Contains(layer.FullPath))
+                    mutation.LayersTouched.Add(layer.FullPath);
+            }
+
+            foreach (var idText in mutation.ModifiedIds)
+            {
+                if (!Guid.TryParse(idText, out var id)) continue;
                 var obj = doc.Objects.FindId(id);
                 if (obj?.Geometry == null) continue;
 
@@ -106,6 +128,30 @@ namespace RhinoClaude.Services.Agent
                 mutation.AffectedBox = new[] { box.Min.X, box.Min.Y, box.Min.Z, box.Max.X, box.Max.Y, box.Max.Z };
 
             MutationLog.Add(mutation);
+        }
+
+        // ── In-place edits ────────────────────────────────────────────
+        //
+        // A tool that changes an object without replacing it — a layer assignment, a tag, a
+        // material, an in-place transform — leaves the id table untouched, so the delta around
+        // the undo record reports nothing. Those tools call NoteModified so the session log
+        // still knows the object is part of the agent's work, which is what the "export result"
+        // button writes out and what self-review counts.
+
+        private readonly List<string> _pendingModifiedIds = new List<string>();
+
+        private void NoteModified(IEnumerable<string> ids)
+        {
+            if (ids == null) return;
+            foreach (var id in ids)
+                if (!string.IsNullOrWhiteSpace(id)) _pendingModifiedIds.Add(id);
+        }
+
+        private List<string> DrainPendingModified()
+        {
+            var drained = _pendingModifiedIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _pendingModifiedIds.Clear();
+            return drained;
         }
 
         /// <summary>
@@ -309,6 +355,8 @@ namespace RhinoClaude.Services.Agent
                         moved?.Geometry?.GetBoundingBox(true) ?? BoundingBox.Unset);
                 }
 
+                NoteModified(updatedIds);
+
                 return (object)new Dictionary<string, object>
                 {
                     { "updatedIds", updatedIds },
@@ -346,6 +394,8 @@ namespace RhinoClaude.Services.Agent
                         throw new InvalidOperationException("Rhino refused to change the layer of object " + obj.Id + ".");
                     updatedIds.Add(obj.Id.ToString());
                 }
+
+                NoteModified(updatedIds);
 
                 return (object)new Dictionary<string, object>
                 {
@@ -411,6 +461,8 @@ namespace RhinoClaude.Services.Agent
                     if (objErrors.Count == 0) updatedIds.Add(obj.Id.ToString());
                     else errors.AddRange(objErrors);
                 }
+
+                NoteModified(updatedIds);
 
                 return (object)new Dictionary<string, object>
                 {

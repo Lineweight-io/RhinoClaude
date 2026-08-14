@@ -52,6 +52,7 @@ namespace RhinoClaude.Agent
             Mutation = new RhinoMutationService(Query, Snapshots);
             Interaction = new RhinoInteractionService(Query);
             Conversations = new AgentConversationStore(doc);
+            Exports = new SessionExportService(doc);
 
             ScriptLog = new JsonlLogger(Settings.ScriptLogPath);
             CaptureLog = new JsonlLogger(Settings.CaptureLogPath);
@@ -84,6 +85,10 @@ namespace RhinoClaude.Agent
         public RhinoMutationService Mutation { get; }
         public RhinoInteractionService Interaction { get; }
         public AgentConversationStore Conversations { get; }
+
+        /// <summary>Backs the sidebar's two export buttons (conversation markdown, result .3dm).</summary>
+        public SessionExportService Exports { get; }
+
         public RhinoCommandService Command { get; private set; }
         public SessionSnapshotService Snapshots { get; }
         public JsonlLogger ScriptLog { get; }

@@ -47,6 +47,8 @@ namespace RhinoClaude.UI
         private Button _stopButton;
         private Button _revertButton;
         private Button _newSessionButton;
+        private Button _exportChatButton;
+        private Button _exportResultButton;
 
         // Streaming state
         private Label _activeAssistantLabel;
@@ -68,6 +70,7 @@ namespace RhinoClaude.UI
             BuildUI();
             RefreshSessionList();
             RefreshSelectionHint();
+            RefreshExportButtons();
             SetStatus(AgentState.Idle, null);
         }
 
@@ -191,6 +194,14 @@ namespace RhinoClaude.UI
             _newSessionButton = new Button { Text = "⟲ New" };
             _newSessionButton.Click += (s, e) => NewSession();
 
+            // The two review exports. They sit on their own row under the session controls so
+            // the destructive button (Revert) does not end up next to a harmless one.
+            _exportChatButton = new Button { Text = "⭳ Export chat…" };
+            _exportChatButton.Click += (s, e) => ExportConversation();
+
+            _exportResultButton = new Button { Text = "⭳ Export result…" };
+            _exportResultButton.Click += (s, e) => ExportResult();
+
             var layout = new DynamicLayout { Padding = new Padding(8), DefaultSpacing = new Size(6, 6) };
             layout.AddRow(_selectionLabel, _includeSelection, null);
             layout.Add(inputHint);
@@ -206,6 +217,12 @@ namespace RhinoClaude.UI
                 Orientation = Orientation.Horizontal,
                 Spacing = 6,
                 Items = { _stopButton, _revertButton, _newSessionButton }
+            });
+            layout.AddRow(new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Items = { _exportChatButton, _exportResultButton }
             });
 
             return new Eto.Forms.Panel { Content = layout };
@@ -324,6 +341,7 @@ namespace RhinoClaude.UI
             _newSessionButton.Enabled = !running;
             _revertButton.Enabled = !running;
             _sessionDropDown.Enabled = !running;
+            RefreshExportButtons();
 
             if (running) _flushTimer.Start();
             else { _flushTimer.Stop(); FlushStreamedText(); }
@@ -370,6 +388,7 @@ namespace RhinoClaude.UI
             if (selected == host.Session) return;
 
             RebuildTranscript(selected);
+            RefreshExportButtons();
             AppendSystemNote("Viewing an earlier session (read-only). Press ⟲ New or pick the current " +
                              "session to send a message.");
         }
@@ -395,6 +414,7 @@ namespace RhinoClaude.UI
             _activeAssistantLabel = null;
             _openCards.Clear();
             RefreshSessionList();
+            RefreshExportButtons();
             UpdateCost(null);
             SetStatus(AgentState.Idle, null);
             AppendSystemNote("New session started.");
@@ -459,6 +479,182 @@ namespace RhinoClaude.UI
             if (scriptWas != host.Settings.EnableScriptTool)
                 AppendSystemNote("The script tool was toggled — that takes effect in the next session (⟲ New).");
         }
+
+        // ── Exports ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// The session the two export buttons act on: whichever one the header dropdown is
+        /// showing, so exporting matches what the user is looking at.
+        /// </summary>
+        private AgentSession SelectedSession()
+        {
+            var host = Host;
+            if (host == null) return null;
+
+            int index = _sessionDropDown.SelectedIndex;
+            if (index >= 0 && index < host.History.Count) return host.History[index];
+            return host.Session;
+        }
+
+        private void RefreshExportButtons()
+        {
+            if (_exportChatButton == null || _exportResultButton == null) return;
+
+            var host = Host;
+            var session = SelectedSession();
+            bool running = session != null && session.IsRunning;
+
+            int messages = session?.Messages.Count ?? 0;
+            _exportChatButton.Enabled = messages > 0 && !running;
+            _exportChatButton.ToolTip = messages == 0
+                ? "Nothing to export yet — send a message first."
+                : running
+                    ? "Wait for the current turn to finish."
+                    : "Save this conversation as a markdown file: every message, tool call, timing and cost.";
+
+            int touched = 0;
+            try { touched = host?.Mutation.MutationLog.SurvivingTouchedIds().Count ?? 0; }
+            catch (Exception) { touched = 0; }
+
+            bool live = session == null || session == host?.Session;
+            _exportResultButton.Enabled = touched > 0 && live && !running;
+            _exportResultButton.ToolTip =
+                touched == 0
+                    ? "Nothing to export yet — the agent has not created or changed any objects this session."
+                    : !live
+                        ? "Only the current session's work can be exported."
+                        : running
+                            ? "Wait for the current turn to finish."
+                            : "Save the " + touched + " object(s) the agent created or changed to a separate .3dm for review.";
+        }
+
+        private void ExportConversation()
+        {
+            var host = Host;
+            var session = SelectedSession();
+            if (host == null || session == null) return;
+
+            if (session.Messages.Count == 0)
+            {
+                AppendSystemNote("Nothing to export — this session has no messages yet.");
+                return;
+            }
+
+            // Mutation and undo counts belong to the live session only; an earlier session's
+            // changes are no longer tracked, so its export omits the "what changed" section
+            // rather than reporting someone else's numbers.
+            bool live = session == host.Session;
+
+            var request = host.Exports.BuildConversationRequest(
+                session,
+                live ? host.Mutation.MutationLog : null,
+                host.Settings,
+                live ? host.Snapshots.PendingUndoCount : 0);
+
+            string markdown;
+            try
+            {
+                markdown = ConversationExport.ToMarkdown(request);
+            }
+            catch (Exception ex)
+            {
+                AppendSystemNote("Could not format the conversation: " + ex.Message);
+                return;
+            }
+
+            string path = AskWhereToSave(
+                "Export RhinoClaude conversation",
+                "Markdown file (*.md)|*.md|Text file (*.txt)|*.txt|All files (*.*)|*.*",
+                "md",
+                ExportNaming.ConversationFileName(request.DocumentName, request.ExportedLocal),
+                host.Exports.SuggestedDirectory());
+            if (path == null) return;
+
+            var outcome = host.Exports.WriteMarkdown(path, markdown);
+            if (!outcome.Success)
+            {
+                AppendSystemNote("Conversation export failed: " + outcome.Error);
+                return;
+            }
+
+            AppendSystemNote("Conversation exported to " + outcome.Path +
+                             " (" + Kb(outcome.Bytes) + ").");
+            RhinoApp.WriteLine("RhinoClaude: conversation exported to " + outcome.Path);
+        }
+
+        private void ExportResult()
+        {
+            var host = Host;
+            if (host == null) return;
+
+            var plan = host.Exports.PlanResultExport(host.Mutation.MutationLog);
+            if (!plan.HasAnything)
+            {
+                AppendSystemNote(plan.Missing.Count > 0
+                    ? "Nothing to export — every object the agent made this session has since been deleted."
+                    : "Nothing to export — the agent has not created or changed any objects this session.");
+                RefreshExportButtons();
+                return;
+            }
+
+            string path = AskWhereToSave(
+                "Export the agent's objects for review",
+                "Rhino 3D model (*.3dm)|*.3dm|All files (*.*)|*.*",
+                "3dm",
+                ExportNaming.ResultFileName(host.Exports.DocumentName(), DateTime.Now),
+                host.Exports.SuggestedDirectory());
+            if (path == null) return;
+
+            var outcome = host.Exports.WriteResult3dm(plan.Objects, path);
+            if (!outcome.Success)
+            {
+                AppendSystemNote("Result export failed: " + outcome.Error);
+                return;
+            }
+
+            string note = "Exported " + outcome.ObjectsWritten + " object(s) to " + outcome.Path +
+                          " (" + Kb(outcome.Bytes) + ").";
+            if (plan.Missing.Count > 0)
+                note += " " + plan.Missing.Count + " object(s) the agent made earlier were deleted before the export.";
+            if (outcome.ObjectsWritten != plan.Objects.Count)
+                note += " Rhino selected " + outcome.ObjectsWritten + " of " + plan.Objects.Count +
+                        " — the rest could not be selected.";
+
+            AppendSystemNote(note);
+            RhinoApp.WriteLine("RhinoClaude: agent results exported to " + outcome.Path);
+        }
+
+        /// <summary>
+        /// Rhino's own save dialog rather than Eto's, so it looks and behaves like every other
+        /// Save As in Rhino and honours the same recent-folder behaviour. Returns null when the
+        /// user cancels.
+        /// </summary>
+        private static string AskWhereToSave(
+            string title, string filter, string defaultExtension, string fileName, string directory)
+        {
+            try
+            {
+                var dialog = new Rhino.UI.SaveFileDialog
+                {
+                    Title = title,
+                    Filter = filter,
+                    DefaultExt = defaultExtension,
+                    FileName = fileName
+                };
+
+                if (!string.IsNullOrEmpty(directory)) dialog.InitialDirectory = directory;
+
+                return dialog.ShowSaveDialog() ? dialog.FileName : null;
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine("RhinoClaude: could not open the save dialog — " + ex.Message);
+                return null;
+            }
+        }
+
+        private static string Kb(long bytes) =>
+            bytes < 1024 ? bytes + " bytes" : (bytes / 1024.0).ToString("0.#") + " KB";
 
         // ── Selection integration (plan §7.3) ─────────────────────────
 
@@ -557,6 +753,7 @@ namespace RhinoClaude.UI
                     AppendSystemNote(message);
 
                 RefreshSelectionHint();
+                RefreshExportButtons();
                 ScrollToBottom();
 
                 // Non-modal nudge for a turn that ended while the panel was not being watched.
@@ -954,6 +1151,7 @@ namespace RhinoClaude.UI
         {
             HookEvents();
             RefreshSelectionHint();
+            RefreshExportButtons();
 
             var host = Host;
             if (host != null) host.Session.Observer = this;
@@ -1038,6 +1236,7 @@ namespace RhinoClaude.UI
                         host.Session.Restore(snapshot);
                         RebuildTranscript(host.Session);
                         RefreshSessionList();
+                        RefreshExportButtons();
                         AppendSystemNote("Resumed \"" + snapshot.DisplayName + "\" — " +
                                          snapshot.UserTurnCount + " turn(s) of context restored. " +
                                          "Note that \"Revert session\" cannot undo work from before " +
