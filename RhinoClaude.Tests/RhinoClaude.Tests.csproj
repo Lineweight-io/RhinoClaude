@@ -37,6 +37,8 @@
     <Compile Include="..\RhinoClaude\Agent\SessionMutationLog.cs" Link="Linked\SessionMutationLog.cs" />
     <Compile Include="..\RhinoClaude\Agent\HistoryCompactor.cs" Link="Linked\HistoryCompactor.cs" />
     <Compile Include="..\RhinoClaude\Agent\ConversationSnapshot.cs" Link="Linked\ConversationSnapshot.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ConversationExport.cs" Link="Linked\ConversationExport.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ExportNaming.cs" Link="Linked\ExportNaming.cs" />
     <Compile Include="..\RhinoClaude\Agent\UndoScope.cs" Link="Linked\UndoScope.cs" />
     <Compile Include="..\RhinoClaude\Agent\ToolContracts.cs" Link="Linked\ToolContracts.cs" />
     <Compile Include="..\RhinoClaude\Agent\ToolRegistry.cs" Link="Linked\ToolRegistry.cs" />

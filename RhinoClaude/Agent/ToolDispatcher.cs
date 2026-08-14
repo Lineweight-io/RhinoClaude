@@ -7,17 +7,6 @@ using Rhino;
 
 namespace RhinoClaude.Agent
 {
-    /// <summary>Outcome of one tool invocation, with the timing the sidebar shows on the card.</summary>
-    public sealed class ToolInvocation
-    {
-        public string ToolUseId { get; set; }
-        public string ToolName { get; set; }
-        public string InputJson { get; set; }
-        public ToolResult Result { get; set; }
-        public long ElapsedMs { get; set; }
-        public bool TerminatesTurn { get; set; }
-    }
-
     /// <summary>
     /// Resolves a tool_use block to its handler and runs it on Rhino's UI thread.
     ///
