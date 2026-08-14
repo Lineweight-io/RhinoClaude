@@ -129,7 +129,83 @@ A worked example, because it is the case that goes wrong most: a gable roof on a
 create_gable_roof, or subdivide_face on the top face along the ridge followed by move_edge on
 the edge that returns. It is not two planes built over the box, and it is not a fan of surfaces
 swept between edges. The test is whether the result is still one closed solid afterwards — if
-it is not, the move was the wrong one.");
+it is not, the move was the wrong one.
+
+### Common Massing Patterns
+
+The following patterns show how to compose the primitive tools to build recurring architectural
+moves. Prefer these sequences over ad-hoc geometry construction. They are compositions, not a
+closed list — an unfamiliar form is usually one of these with a step changed, so reason from the
+pattern rather than reaching for loose surfaces when nothing matches exactly.
+
+Two things apply to all of them. Face and edge indices change after every topology edit, so
+re-read get_mass_faces or get_mass_edges between steps rather than reusing an id from two calls
+ago. And each tool call is its own undo record, so a multi-step pattern is several steps for the
+user to take back — say so in your summary when a pattern ran long.
+
+**1. Gable roof.** A ridge across the top face with the roof falling both ways from it. Use
+create_gable_roof(massId, ridgeLineStart, ridgeLineEnd, pitchHeight) for the standard case — it
+is the one shipped composite and it undoes as a single action. To vary it, subdivide_face on
+{role: ""roof""} with {line: {startPoint, endPoint}} along the intended ridge, then move_edge on
+the returned newEdgeIds[0] with direction ""+z"" and the pitch height as the distance.
+
+**2. Shed / single-slope roof.** One plane sloping the whole way across, high on one side. On a
+box no subdivision is needed: move_edge on the top edge of the high side, direction ""+z"",
+distance equal to the rise. Identify that edge from get_mass_edges by its endpoints — a role
+selector will not tell two parapet edges apart — and pass its edgeId. Subdivide first only when
+the slope should start inboard rather than at the eave; then move_edge the edge the cut created.
+
+**3. Parapet.** A perimeter wall standing above the roof plane, hiding the roof from the street.
+push_pull_face on {role: ""roof""} by the parapet height, which lifts the whole top; then
+add_mass a box inset from the perimeter by the wall thickness, running from the original roof
+level up past the new top, and subtract_mass it out. What is left is the wall projecting up
+around an open roof, and describe_massing will report the hollow as a Cut.
+
+**4. Window opening (recessed).** A hole in a facade with the glass set back in a reveal.
+cut_opening on the facade face with an explicit shallow depth — that is the recess; omitting
+depth cuts all the way through the mass instead. Subdivide the facade first only when you want
+the reveal's jambs and head as faces you can then move independently; for an ordinary punched
+window cut_opening alone is the whole pattern. For a flush window, draw the rectangle on an
+OPENING_Window layer instead of cutting: the classifier attaches drawn openings to the face
+behind them, and the wall-window ratio counts them either way.
+
+**5. Storefront (large glazed opening).** The ground-floor version of pattern 4 at
+floor-to-ceiling proportions, typically the full width of a structural bay. cut_opening with
+openingType ""Storefront"", a sill at or near grade, and a head at the underside of the second
+floor. Cut deeper when the storefront is recessed behind a colonnade or an arcade; keep it
+shallow when it sits flush with the facade.
+
+**6. Dormer.** A small raised box breaking through a roof plane, usually with its own little
+gable. Isolate the dormer's footprint on the roof with successive subdivide_face cuts — four
+cuts to bound a rectangle, re-reading get_mass_faces between them because every cut renumbers
+the faces — then push_pull_face outward on that small face to raise the box. Finish with
+pattern 1 on the box's new top face. This is several calls; capture_views afterwards is worth it.
+
+**7. Setback / stepped mass.** An upper volume standing back from the one below, the zoning
+move and the classic tower-on-podium. slice_mass_at_elevation with mode ""split-mass"" at the
+setback level, which leaves two stacked masses that both inherit the original's function; then
+push_pull_face with a negative distance on each of the upper piece's facade faces to pull it in.
+One call per face, or one call with {role: ""facade"", orientation} to take a side at a time.
+
+**8. Overhang / cantilever.** Something projecting past the wall below it. extrude_face_outward
+on the face it grows from — at the roof line for a roof overhang or an eave, off a facade for a
+cantilevered upper floor. The asOverhang flag is the real decision: true tags the result as an
+Overhang and keeps it out of program area, which is right for a canopy or a brise-soleil; false
+tags it as a Mass carrying the parent's function, which is right when the projection is
+habitable floor.
+
+**9. Chamfered / angled corner.** A corner taken off, softening how the mass turns. fillet_edges
+with {role: ""outside-corner""} and a radius is the whole pattern for a rounded corner, and one
+selector covers every outside corner on the mass. For a flat, faceted chamfer, subtract_mass a
+box rotated 45° through the corner — that gives the exact angled plane; subdividing a narrow
+strip off each of the two facades that meet at the corner and pushing both in reads similarly
+at massing scale.
+
+**10. Two-story wing.** A lower or taller arm reading as part of the same building rather than a
+second building. add_mass with the wing's footprint and height, passing unionWithExisting with
+the existing mass id — that unions in the same call and the same undo record. Use boolean_union
+separately only when the wing already exists as its own object. Check the result is still one
+solid; two masses that merely touch are not the same thing as one form.");
             }
 
             sb.AppendLine();
