@@ -35,15 +35,64 @@ namespace RhinoClaude.Tests
         }
 
         [Fact]
-        public void CapturesStopReasonAndAccumulatesUsage()
+        public void CapturesStopReasonAndUsage()
         {
             var accumulator = Feed(TextTurn);
 
             Assert.Equal("end_turn", accumulator.StopReason);
             Assert.True(accumulator.Completed);
             Assert.Equal(120, accumulator.Usage.InputTokens);
-            // message_start reports 1, message_delta reports 42 — both are summed.
-            Assert.Equal(43, accumulator.Usage.OutputTokens);
+            // Both events report cumulative totals: message_start's partial count of 1 is
+            // superseded by message_delta's 42, not added to it.
+            Assert.Equal(42, accumulator.Usage.OutputTokens);
+        }
+
+        /// <summary>
+        /// The shape the API actually sends: message_delta repeats input_tokens and both cache
+        /// pools alongside the cumulative output count. Summing the two events billed the whole
+        /// input side twice — a ~2x over-report on any input-heavy turn.
+        /// </summary>
+        private const string CumulativeUsageTurn =
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":" +
+                "{\"input_tokens\":10682,\"cache_creation_input_tokens\":400,\"cache_read_input_tokens\":2000,\"output_tokens\":3}}}\n\n" +
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Done.\"}}\n\n" +
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":" +
+                "{\"input_tokens\":10682,\"cache_creation_input_tokens\":400,\"cache_read_input_tokens\":2000,\"output_tokens\":510}}\n\n" +
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+
+        [Fact]
+        public void CumulativeUsageIsMergedNotSummed()
+        {
+            var usage = Feed(CumulativeUsageTurn).Usage;
+
+            Assert.Equal(10682, usage.InputTokens);
+            Assert.Equal(400, usage.CacheCreationInputTokens);
+            Assert.Equal(2000, usage.CacheReadInputTokens);
+            Assert.Equal(510, usage.OutputTokens);
+        }
+
+        [Fact]
+        public void FieldsOmittedFromMessageDeltaKeepTheirMessageStartValue()
+        {
+            // The abbreviated form some responses use: message_delta carries output_tokens only.
+            var usage = Feed(TextTurn).Usage;
+
+            Assert.Equal(120, usage.InputTokens);
+            Assert.Equal(42, usage.OutputTokens);
+        }
+
+        [Fact]
+        public void AStreamThatEndsBeforeMessageDeltaKeepsTheMessageStartCounts()
+        {
+            // A cancelled or truncated turn still has to be billed for what it consumed.
+            var usage = Feed(
+                "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5000,\"output_tokens\":2}}}\n\n")
+                .Usage;
+
+            Assert.Equal(5000, usage.InputTokens);
+            Assert.Equal(2, usage.OutputTokens);
         }
 
         private const string ToolTurn =

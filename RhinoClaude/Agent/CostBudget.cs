@@ -36,56 +36,94 @@ namespace RhinoClaude.Agent
     /// </summary>
     public sealed class CostBudget
     {
-        /// <summary>
-        /// Rates keyed by model-id prefix, longest match wins. Cache-write is 1.25x input
-        /// and cache-read is 0.1x input for every current model, so only the two base
-        /// rates need maintaining per entry.
-        ///
-        /// Sonnet 5 carries introductory pricing ($2/$10) through 2026-08-31. The list rate is
-        /// used instead, so the meter over-estimates slightly until then rather than encoding
-        /// a cutoff date that silently becomes wrong.
-        /// </summary>
-        private static readonly List<KeyValuePair<string, ModelPricing>> Table =
-            new List<KeyValuePair<string, ModelPricing>>
-            {
-                Rate("claude-sonnet-4-5", 3.00, 15.00),
-                Rate("claude-sonnet-4-6", 3.00, 15.00),
-                Rate("claude-sonnet-5",   3.00, 15.00),
-                Rate("claude-opus-4",     5.00, 25.00),
-                Rate("claude-opus-5",     5.00, 25.00),
-                Rate("claude-haiku-4-5",  1.00,  5.00),
-                Rate("claude-fable-5",   10.00, 50.00),
-            };
+        /// <summary>Cache writes bill at 1.25x the input rate (the 5-minute TTL).</summary>
+        /// <remarks>
+        /// The 1-hour TTL is 2x instead. Nothing in the plugin sets <c>cache_control</c>, so
+        /// both cache pools are always zero today; revisit this constant if caching is added
+        /// with a 1h TTL.
+        /// </remarks>
+        public const double CacheWriteMultiplier = 1.25;
 
-        private static KeyValuePair<string, ModelPricing> Rate(string prefix, double input, double output)
+        /// <summary>Cache reads bill at 0.1x the input rate.</summary>
+        public const double CacheReadMultiplier = 0.10;
+
+        /// <summary>One model's rates, plus any promotional rate and the date it lapses.</summary>
+        private sealed class RateEntry
         {
-            return new KeyValuePair<string, ModelPricing>(prefix, new ModelPricing
-            {
-                InputPerMTok = input,
-                OutputPerMTok = output,
-                CacheWritePerMTok = input * 1.25,
-                CacheReadPerMTok = input * 0.10
-            });
+            public string Prefix;
+            public ModelPricing List;
+            public ModelPricing Intro;          // null when the model has no promotional rate
+            public DateTime IntroThroughUtc;    // inclusive; the last day Intro applies
+
+            public ModelPricing For(DateTime asOfUtc) =>
+                Intro != null && asOfUtc.Date <= IntroThroughUtc.Date ? Intro : List;
         }
 
-        /// <summary>Falls back to Sonnet-tier rates for an unrecognised model id.</summary>
-        public static ModelPricing PricingFor(string modelId)
+        /// <summary>
+        /// The one place per-token prices live. Keyed by model-id prefix, longest match wins.
+        /// Cache-write and cache-read are fixed multiples of the input rate on every current
+        /// model, so only the two base rates are maintained per entry.
+        /// </summary>
+        private static readonly List<RateEntry> Table = new List<RateEntry>
         {
-            ModelPricing best = null;
+            Rate("claude-sonnet-4-5", 3.00, 15.00),
+            Rate("claude-sonnet-4-6", 3.00, 15.00),
+            // Sonnet 5 is on introductory pricing through 2026-08-31, after which it reverts
+            // to the $3/$15 list rate. Encoded with its end date rather than assumed either
+            // way: charging list today over-reports every Sonnet 5 turn by 50%.
+            Rate("claude-sonnet-5",   3.00, 15.00, introInput: 2.00, introOutput: 10.00,
+                                                   introThroughUtc: new DateTime(2026, 8, 31)),
+            Rate("claude-opus-4",     5.00, 25.00),
+            Rate("claude-opus-5",     5.00, 25.00),
+            Rate("claude-haiku-4-5",  1.00,  5.00),
+            Rate("claude-fable-5",   10.00, 50.00),
+        };
+
+        private static RateEntry Rate(
+            string prefix, double input, double output,
+            double introInput = 0, double introOutput = 0, DateTime introThroughUtc = default(DateTime))
+        {
+            return new RateEntry
+            {
+                Prefix = prefix,
+                List = Pricing(input, output),
+                Intro = introInput > 0 ? Pricing(introInput, introOutput) : null,
+                IntroThroughUtc = introThroughUtc
+            };
+        }
+
+        private static ModelPricing Pricing(double input, double output) => new ModelPricing
+        {
+            InputPerMTok = input,
+            OutputPerMTok = output,
+            CacheWritePerMTok = input * CacheWriteMultiplier,
+            CacheReadPerMTok = input * CacheReadMultiplier
+        };
+
+        /// <summary>Falls back to Sonnet-tier rates for an unrecognised model id.</summary>
+        public static ModelPricing PricingFor(string modelId) => PricingFor(modelId, DateTime.UtcNow);
+
+        /// <summary>
+        /// Rates in force on <paramref name="asOfUtc"/> — the date matters only while a model
+        /// is on introductory pricing. Exposed so the boundary is testable.
+        /// </summary>
+        public static ModelPricing PricingFor(string modelId, DateTime asOfUtc)
+        {
+            RateEntry best = null;
             int bestLength = -1;
             if (!string.IsNullOrEmpty(modelId))
             {
                 foreach (var entry in Table)
                 {
-                    if (modelId.StartsWith(entry.Key, StringComparison.OrdinalIgnoreCase) &&
-                        entry.Key.Length > bestLength)
+                    if (modelId.StartsWith(entry.Prefix, StringComparison.OrdinalIgnoreCase) &&
+                        entry.Prefix.Length > bestLength)
                     {
-                        best = entry.Value;
-                        bestLength = entry.Key.Length;
+                        best = entry;
+                        bestLength = entry.Prefix.Length;
                     }
                 }
             }
-            return best ?? Table[0].Value;
+            return (best ?? Table[0]).For(asOfUtc);
         }
 
         private readonly ModelPricing _pricing;

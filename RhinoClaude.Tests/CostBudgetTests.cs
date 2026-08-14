@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using RhinoClaude.Agent;
 using Xunit;
@@ -21,9 +22,13 @@ namespace RhinoClaude.Tests
         public void LongestPrefixWins()
         {
             // "claude-sonnet-4-5" and "claude-sonnet-5" must not be confused with each other.
-            Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-5").InputPerMTok);
-            Assert.Equal(5.00, CostBudget.PricingFor("claude-opus-4-8").InputPerMTok);
-            Assert.Equal(1.00, CostBudget.PricingFor("claude-haiku-4-5").InputPerMTok);
+            // Pinned past the Sonnet 5 introductory window so this tests matching, not dates.
+            var afterIntro = new DateTime(2026, 12, 1);
+
+            Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-5", afterIntro).InputPerMTok);
+            Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-4-5", afterIntro).InputPerMTok);
+            Assert.Equal(5.00, CostBudget.PricingFor("claude-opus-4-8", afterIntro).InputPerMTok);
+            Assert.Equal(1.00, CostBudget.PricingFor("claude-haiku-4-5", afterIntro).InputPerMTok);
         }
 
         [Fact]
@@ -46,6 +51,74 @@ namespace RhinoClaude.Tests
             };
 
             Assert.Equal(3.00 + 15.00 + 3.75 + 0.30, pricing.CostOf(usage), 6);
+        }
+
+        /// <summary>
+        /// Pins the arithmetic against hand-computed Sonnet 4.5 list rates. Each pool is
+        /// charged at its own rate exactly once — cache tokens are priced on their own lines
+        /// and are not also billed as regular input.
+        /// </summary>
+        [Fact]
+        public void PricingMathIsPinnedForASyntheticUsageObject()
+        {
+            var pricing = CostBudget.PricingFor("claude-sonnet-4-5-20250929");
+            var usage = new TokenUsage
+            {
+                InputTokens = 12_000,               // 12k  x $3.00/MTok  = $0.036
+                OutputTokens = 3_400,               // 3.4k x $15.00/MTok = $0.051
+                CacheCreationInputTokens = 8_000,   // 8k   x $3.75/MTok  = $0.030
+                CacheReadInputTokens = 40_000       // 40k  x $0.30/MTok  = $0.012
+            };
+
+            Assert.Equal(0.129, pricing.CostOf(usage), 9);
+        }
+
+        /// <summary>
+        /// The regression that mattered: a turn whose cache pools are populated must not be
+        /// billed for them twice, nor have them folded into the input rate. Both mistakes
+        /// inflate a cache-heavy turn well past the real cost.
+        /// </summary>
+        [Fact]
+        public void CacheCreationAndCacheReadAreEachChargedOnceAtTheirOwnRate()
+        {
+            var pricing = CostBudget.PricingFor("claude-sonnet-4-5-20250929");
+            var usage = new TokenUsage
+            {
+                InputTokens = 1_000,
+                CacheCreationInputTokens = 100_000,
+                CacheReadInputTokens = 100_000
+            };
+
+            double expected = 0.003        // 1k input  @ $3.00
+                            + 0.375        // 100k write @ $3.75
+                            + 0.030;       // 100k read  @ $0.30
+            Assert.Equal(expected, pricing.CostOf(usage), 9);
+
+            // Charging either cache pool as plain input, or double-counting one, lands well
+            // outside this bound — 100k at the input rate alone is $0.30.
+            Assert.True(pricing.CostOf(usage) < 0.45);
+        }
+
+        [Fact]
+        public void SonnetFiveUsesTheIntroductoryRateUntilItLapses()
+        {
+            var intro = CostBudget.PricingFor("claude-sonnet-5", new DateTime(2026, 8, 14));
+            Assert.Equal(2.00, intro.InputPerMTok);
+            Assert.Equal(10.00, intro.OutputPerMTok);
+            Assert.Equal(2.50, intro.CacheWritePerMTok, 6);
+            Assert.Equal(0.20, intro.CacheReadPerMTok, 6);
+
+            // Inclusive of the final day, list rate the morning after.
+            Assert.Equal(2.00, CostBudget.PricingFor("claude-sonnet-5", new DateTime(2026, 8, 31)).InputPerMTok);
+            Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-5", new DateTime(2026, 9, 1)).InputPerMTok);
+        }
+
+        [Fact]
+        public void ModelsWithoutAPromotionalRateIgnoreTheDate()
+        {
+            Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-4-5", new DateTime(2026, 8, 14)).InputPerMTok);
+            Assert.Equal(5.00, CostBudget.PricingFor("claude-opus-5", new DateTime(2026, 8, 14)).InputPerMTok);
+            Assert.Equal(5.00, CostBudget.PricingFor("claude-opus-5", new DateTime(2027, 1, 1)).InputPerMTok);
         }
 
         [Fact]
