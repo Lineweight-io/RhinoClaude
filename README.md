@@ -17,7 +17,6 @@ one click.
 - **Streaming tool-use loop** — SSE from the first request. Claude plans, calls tools, reads
   the results, and iterates until it signals done or hits a guardrail. Summarized reasoning
   streams into a collapsed card above each answer.
-  the results, and iterates until it signals done or hits a guardrail.
 - **Guardrails** — $0.50 per turn and 25 iterations by default, both configurable. The loop
   stops before the next model call rather than mid-mutation.
 - **One-click revert** — every mutation opens its own Rhino undo record; "Revert session"
