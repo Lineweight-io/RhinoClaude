@@ -74,15 +74,20 @@ namespace RhinoClaude.Tools
             Description =
                 "Enumerate the document's layers with their full paths, visibility, lock state, object " +
                 "counts and colours. Layer full paths use '::' between parent and child (e.g. " +
-                "'Walls::Interior'); other tools that take a layer expect that exact full path.",
+                "'Walls::Interior'); other tools that take a layer expect that exact full path. " +
+                "Capped at 100 layers per call; the response reports totalLayers and whether it " +
+                "was truncated.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""properties"": {
-    ""includeHidden"": { ""type"": ""boolean"", ""default"": true, ""description"": ""Include layers that are currently switched off."" }
+    ""includeHidden"": { ""type"": ""boolean"", ""default"": true, ""description"": ""Include layers that are currently switched off."" },
+    ""limit"": { ""type"": ""integer"", ""default"": 100, ""minimum"": 1, ""maximum"": 1000, ""description"": ""Rows to return. Raise it only when the default came back truncated."" }
   },
   ""additionalProperties"": false
 }",
-            Handler = (input, ct) => ToolResult.Ok(query.ListLayers(GetBool(input, "includeHidden", true)))
+            Handler = (input, ct) => ToolResult.Ok(query.ListLayers(
+                GetBool(input, "includeHidden", true),
+                GetInt(input, "limit", PayloadCaps.ListLayersDefaultLimit)))
         };
 
         private static ToolDefinition ListObjects(RhinoQueryService query) => new ToolDefinition
@@ -91,15 +96,17 @@ namespace RhinoClaude.Tools
             IsReadOnly = true,
             Description =
                 "Enumerate objects with optional filters. Returns id, type, layer, name, bounding box and " +
-                "RC: tags for each. Use layerFullPath to list one layer's contents. Results are capped by " +
-                "'limit'; the response reports totalMatched and whether it was truncated.",
+                "RC: tags for each. Use layerFullPath to list one layer's contents. Returns 50 rows by " +
+                "default; the response reports totalMatched and whether it was truncated. Each row costs " +
+                "real context, and everything a tool returns is re-sent on every later step of the turn, " +
+                "so narrow the filters first and only raise 'limit' when you genuinely need more rows.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""properties"": {
     ""layerFullPath"": { ""type"": ""string"", ""description"": ""Only objects on this layer, e.g. 'Walls::Interior'."" },
     ""objectType"": { ""type"": ""string"", ""description"": ""Rhino object type name, e.g. 'Brep', 'Curve', 'Point', 'Mesh'."" },
     ""hasTagKey"": { ""type"": ""string"", ""description"": ""Only objects that have any value for this RC: tag key, e.g. 'RC:ElementType'."" },
-    ""limit"": { ""type"": ""integer"", ""default"": 200, ""minimum"": 1, ""maximum"": 1000 }
+    ""limit"": { ""type"": ""integer"", ""default"": 50, ""minimum"": 1, ""maximum"": 1000, ""description"": ""Rows to return. Raise it only when the default came back truncated and you need the rest."" }
   },
   ""additionalProperties"": false
 }",
@@ -107,7 +114,7 @@ namespace RhinoClaude.Tools
                 GetString(input, "layerFullPath"),
                 GetString(input, "objectType"),
                 GetString(input, "hasTagKey"),
-                GetInt(input, "limit", 200)))
+                GetInt(input, "limit", PayloadCaps.ListObjectsDefaultLimit)))
         };
 
         private static ToolDefinition GetObject(RhinoQueryService query) => new ToolDefinition
@@ -118,19 +125,33 @@ namespace RhinoClaude.Tools
                 "Full detail for one object: bounding box, tags, and a geometry summary (curve length, " +
                 "Brep face/edge counts, volume, validity). Set includeSubobjects to also get per-face " +
                 "and per-edge indexing with areas, centroids, normals and planarity — those indices are " +
-                "what later face/edge editing tools will refer to.",
+                "what later face/edge editing tools will refer to. Subobjects are capped at 30 faces " +
+                "and 60 edges per call, which covers an ordinary mass; on a denser Brep the response " +
+                "reports totalFaces, totalEdges, facesReturned, edgesReturned and truncated, and you " +
+                "can page with facesRange / edgesRange. The geometry summary already gives you the " +
+                "face and edge counts, so read those first rather than paging to find out how big it is.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""required"": [""id""],
   ""properties"": {
     ""id"": { ""type"": ""string"", ""description"": ""Object GUID."" },
-    ""includeSubobjects"": { ""type"": ""boolean"", ""default"": false }
+    ""includeSubobjects"": { ""type"": ""boolean"", ""default"": false },
+    ""facesRange"": {
+      ""type"": ""array"", ""items"": { ""type"": ""integer"", ""minimum"": 0 }, ""minItems"": 2, ""maxItems"": 2,
+      ""description"": ""Inclusive [start, end] face indices, e.g. [30, 59] for the second page. Still capped at 30 faces per call.""
+    },
+    ""edgesRange"": {
+      ""type"": ""array"", ""items"": { ""type"": ""integer"", ""minimum"": 0 }, ""minItems"": 2, ""maxItems"": 2,
+      ""description"": ""Inclusive [start, end] edge indices. Still capped at 60 edges per call.""
+    }
   },
   ""additionalProperties"": false
 }",
             Handler = (input, ct) => ToolResult.Ok(query.GetObject(
                 RequireString(input, "id"),
-                GetBool(input, "includeSubobjects", false)))
+                GetBool(input, "includeSubobjects", false),
+                GetIntArray(input, "facesRange"),
+                GetIntArray(input, "edgesRange")))
         };
 
         private static ToolDefinition GetSelection(RhinoQueryService query) => new ToolDefinition
@@ -489,6 +510,24 @@ namespace RhinoClaude.Tools
                 return parsed;
             }
             return fallback;
+        }
+
+        /// <summary>
+        /// An optional integer array, e.g. a <c>[start, end]</c> paging range. Null when absent
+        /// or malformed — the caps helper clamps whatever comes through rather than erroring,
+        /// because a tool failure costs the agent a whole round trip to recover from.
+        /// </summary>
+        private static int[] GetIntArray(JsonElement input, string name)
+        {
+            if (!input.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var values = value.EnumerateArray()
+                              .Where(e => e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out _))
+                              .Select(e => e.GetInt32())
+                              .ToArray();
+
+            return values.Length == 0 ? null : values;
         }
 
         private static List<string> RequireStringList(JsonElement input, string name)
