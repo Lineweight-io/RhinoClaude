@@ -412,6 +412,7 @@ namespace RhinoClaude.UI
             host.Settings.ShowThinking = updated.ShowThinking;
             host.Settings.EnableScriptTool = updated.EnableScriptTool;
             host.Settings.ScriptTimeoutSeconds = updated.ScriptTimeoutSeconds;
+            host.Settings.EnableRhinoCommandTool = updated.EnableRhinoCommandTool;
             host.Settings.ReviewerModel = updated.ReviewerModel;
             host.Settings.EnableSelfReview = updated.EnableSelfReview;
             host.Settings.MaxReviewCycles = updated.MaxReviewCycles;
@@ -510,6 +511,10 @@ namespace RhinoClaude.UI
 
         public void OnReviewCompleted(ReviewOutcome outcome, int cycle) =>
             Application.Instance.AsyncInvoke(() => AppendReview(outcome, cycle));
+
+        public void OnHistoryCompacted(HistoryCompactor.CompactionReport report) =>
+            Application.Instance.AsyncInvoke(() =>
+                AppendSystemNote("Conversation trimmed to stay affordable — " + report + "."));
 
         public void OnTurnFinished(AgentState finalState, string message) =>
             Application.Instance.AsyncInvoke(() =>
@@ -856,6 +861,10 @@ namespace RhinoClaude.UI
             RhinoDoc.SelectObjects += OnSelectionChanged;
             RhinoDoc.DeselectObjects += OnSelectionChanged;
             RhinoDoc.DeselectAllObjects += OnDeselectAll;
+            RhinoDoc.BeginSaveDocument += OnBeginSaveDocument;
+
+            var host = Host;
+            if (host != null) host.FirstScriptedCommand += OnFirstScriptedCommand;
         }
 
         private void UnhookEvents()
@@ -865,7 +874,37 @@ namespace RhinoClaude.UI
             RhinoDoc.SelectObjects -= OnSelectionChanged;
             RhinoDoc.DeselectObjects -= OnSelectionChanged;
             RhinoDoc.DeselectAllObjects -= OnDeselectAll;
+            RhinoDoc.BeginSaveDocument -= OnBeginSaveDocument;
+
+            var host = Host;
+            if (host != null) host.FirstScriptedCommand -= OnFirstScriptedCommand;
         }
+
+        /// <summary>
+        /// Persist the conversation into the .3dm as it is saved, so it travels with the file
+        /// (plan §2.4). Runs on the UI thread during the save, so it stays cheap.
+        /// </summary>
+        private void OnBeginSaveDocument(object sender, DocumentSaveEventArgs e)
+        {
+            if (e.Document == null || e.Document.RuntimeSerialNumber != _docSN) return;
+
+            var host = Host;
+            if (host?.Session == null) return;
+            if (host.Session.Messages.Count == 0) return;
+
+            host.Conversations.Save(host.Session, host.Snapshots.PendingUndoCount);
+        }
+
+        /// <summary>Plan §4.7: visible, non-blocking notice the first time Tier 3 is used.</summary>
+        private void OnFirstScriptedCommand(string commandLine) =>
+            Application.Instance.AsyncInvoke(() =>
+            {
+                AppendSystemNote(
+                    "Claude ran a scripted Rhino command for the first time this session: " +
+                    commandLine + ". Scripted commands are non-atomic and undo less cleanly than " +
+                    "the other tools — check the result. You can switch this tool off in settings.");
+                RhinoApp.WriteLine("RhinoClaude: agent ran a scripted command — " + commandLine);
+            });
 
         private void OnSelectionChanged(object sender, RhinoObjectSelectionEventArgs e)
         {
@@ -885,8 +924,107 @@ namespace RhinoClaude.UI
         {
             HookEvents();
             RefreshSelectionHint();
+
             var host = Host;
             if (host != null) host.Session.Observer = this;
+
+            OfferStoredConversation();
+        }
+
+        private bool _resumeOffered;
+
+        /// <summary>
+        /// Plan §2.4: if the document carries a saved conversation, offer New / Resume /
+        /// Discard once per panel session, with New the default. Offered rather than restored
+        /// automatically — reopening a file should not silently reinstate an agent's context.
+        /// </summary>
+        private void OfferStoredConversation()
+        {
+            if (_resumeOffered) return;
+            _resumeOffered = true;
+
+            var host = Host;
+            if (host == null) return;
+            if (host.Session.Messages.Count > 0) return;   // a live session already has context
+
+            ConversationSnapshot snapshot;
+            try { snapshot = host.Conversations.LoadMostRecent(); }
+            catch (Exception) { return; }
+
+            if (snapshot == null || snapshot.Messages.Count == 0) return;
+
+            string when = snapshot.SavedAt == DateTime.MinValue
+                ? "previously"
+                : snapshot.SavedAt.ToLocalTime().ToString("g");
+
+            var dialog = new Dialog<string>
+            {
+                Title = "Earlier RhinoClaude conversation",
+                Padding = new Padding(12),
+                Resizable = false
+            };
+
+            var layout = new DynamicLayout { DefaultSpacing = new Size(8, 8) };
+            layout.Add(new Label
+            {
+                Text = "This document has a saved conversation:\n\n" +
+                       "    \"" + (snapshot.DisplayName ?? "(untitled)") + "\"\n" +
+                       "    " + snapshot.UserTurnCount + " turn(s), saved " + when + "\n\n" +
+                       "Resuming restores the conversation so Claude remembers the context.\n" +
+                       "Screenshots are not saved — it will re-capture if it needs to look.",
+                Wrap = WrapMode.Word,
+                Width = 380
+            });
+
+            var newSession = new Button { Text = "New session" };
+            var resume = new Button { Text = "Resume" };
+            var discard = new Button { Text = "Discard saved" };
+
+            newSession.Click += (s, e) => dialog.Close("new");
+            resume.Click += (s, e) => dialog.Close("resume");
+            discard.Click += (s, e) => dialog.Close("discard");
+
+            dialog.DefaultButton = newSession;   // §2.4: New is pre-selected
+            dialog.AbortButton = newSession;
+
+            layout.Add(new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Items = { null, resume, discard, newSession }
+            });
+
+            dialog.Content = layout;
+
+            string choice;
+            try { choice = dialog.ShowModal(this); }
+            catch (Exception) { return; }
+
+            switch (choice)
+            {
+                case "resume":
+                    try
+                    {
+                        host.Session.Restore(snapshot);
+                        RebuildTranscript(host.Session);
+                        RefreshSessionList();
+                        AppendSystemNote("Resumed \"" + snapshot.DisplayName + "\" — " +
+                                         snapshot.UserTurnCount + " turn(s) of context restored. " +
+                                         "Note that \"Revert session\" cannot undo work from before " +
+                                         "the document was reopened.");
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendSystemNote("Could not resume that conversation: " + ex.Message);
+                    }
+                    break;
+
+                case "discard":
+                    host.Conversations.DeleteAll();
+                    AppendSystemNote("Saved conversation discarded. The document must be saved again " +
+                                     "for that to persist.");
+                    break;
+            }
         }
 
         public void PanelHidden(uint documentSerialNumber, ShowPanelReason reason) => UnhookEvents();

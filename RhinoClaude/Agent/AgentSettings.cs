@@ -66,6 +66,13 @@ namespace RhinoClaude.Agent
 
         public int ScriptTimeoutSeconds { get; set; } = 15;
 
+        /// <summary>
+        /// Tier 3 escape hatch (plan §4.7). Off by default: scripted commands are non-atomic,
+        /// undo less cleanly than everything else, and the curated tools plus the C# hatch
+        /// cover almost everything. Turn it on when a specific command needs it.
+        /// </summary>
+        public bool EnableRhinoCommandTool { get; set; } = false;
+
         public string ScriptLogPath { get; set; }
         public string CaptureLogPath { get; set; }
 
@@ -90,6 +97,7 @@ namespace RhinoClaude.Agent
             UiFlushIntervalMs = UiFlushIntervalMs,
             EnableScriptTool = EnableScriptTool,
             ScriptTimeoutSeconds = ScriptTimeoutSeconds,
+            EnableRhinoCommandTool = EnableRhinoCommandTool,
             ScriptLogPath = ScriptLogPath,
             CaptureLogPath = CaptureLogPath
         };

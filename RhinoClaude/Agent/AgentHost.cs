@@ -45,6 +45,7 @@ namespace RhinoClaude.Agent
             Snapshots = new SessionSnapshotService(doc);
             Mutation = new RhinoMutationService(Query, Snapshots);
             Interaction = new RhinoInteractionService(Query);
+            Conversations = new AgentConversationStore(doc);
 
             ScriptLog = new JsonlLogger(Settings.ScriptLogPath);
             CaptureLog = new JsonlLogger(Settings.CaptureLogPath);
@@ -63,6 +64,8 @@ namespace RhinoClaude.Agent
         public RhinoQueryService Query { get; }
         public RhinoMutationService Mutation { get; }
         public RhinoInteractionService Interaction { get; }
+        public AgentConversationStore Conversations { get; }
+        public RhinoCommandService Command { get; private set; }
         public SessionSnapshotService Snapshots { get; }
         public JsonlLogger ScriptLog { get; }
         public JsonlLogger CaptureLog { get; }
@@ -89,6 +92,9 @@ namespace RhinoClaude.Agent
             {
                 DefaultTimeoutSeconds = Settings.ScriptTimeoutSeconds
             };
+
+            Command = new RhinoCommandService(Query, Snapshots, ScriptLog, sessionId);
+            Command.FirstUseInSession += line => FirstScriptedCommand?.Invoke(line);
 
             Review = new SelfReviewService(Query, Capture, client, Mutation.MutationLog)
             {
@@ -173,9 +179,17 @@ namespace RhinoClaude.Agent
         {
             var registry = new ToolRegistry();
             registry.RegisterAll(Phase1Tools.Build(Query, Mutation, Capture, Script, Settings));
-            registry.RegisterAll(Tier1Tools.Build(Query, Mutation, Interaction));
+            registry.RegisterAll(Tier1Tools.Build(
+                Query, Mutation, Interaction,
+                Settings.EnableRhinoCommandTool ? Command : null));
             return registry;
         }
+
+        /// <summary>
+        /// Raised the first time a session runs a scripted Rhino command, so the sidebar can
+        /// show the banner from plan §4.7. Non-blocking: the user is told, not asked.
+        /// </summary>
+        public event Action<string> FirstScriptedCommand;
 
         /// <summary>True when the tool set changed and only a new session will pick it up.</summary>
         public bool ToolSetChangedSinceSessionStart(bool scriptEnabledAtStart) =>

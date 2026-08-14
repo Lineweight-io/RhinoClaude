@@ -18,9 +18,10 @@ namespace RhinoClaude.Tools
         public static List<ToolDefinition> Build(
             RhinoQueryService query,
             RhinoMutationService mutation,
-            RhinoInteractionService interaction)
+            RhinoInteractionService interaction,
+            RhinoCommandService command = null)
         {
-            return new List<ToolDefinition>
+            var tools = new List<ToolDefinition>
             {
                 // Query
                 ListNamedViews(query),
@@ -60,7 +61,37 @@ namespace RhinoClaude.Tools
                 // Meta
                 SetObjectTags(mutation)
             };
+
+            // Tier 3 sits last so it reads as the bottom of the ladder in the tools array.
+            if (command != null) tools.Add(RunRhinoCommand(command));
+
+            return tools;
         }
+
+        // ── Tier 3 ────────────────────────────────────────────────────
+
+        private static ToolDefinition RunRhinoCommand(RhinoCommandService command) => new ToolDefinition
+        {
+            Name = "run_rhino_command",
+            Description =
+                "Last resort. Runs a Rhino command as if typed at the command line. Only reach for this " +
+                "when neither a curated tool nor run_rhinocommon_script covers it — rendering, a legacy " +
+                "command, or a command supplied by another plugin with no API. " +
+                "Use the scripted form: a leading underscore suppresses localisation and a dash " +
+                "suppresses the dialog, so '_-Render' rather than 'Render', with any arguments on the " +
+                "same line. Commands that wait for input nobody can give will simply hang and fail. " +
+                "This is non-atomic and undoes less cleanly than the other tools, so prefer them.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""commandLine"", ""purpose""],
+  ""properties"": {
+    ""commandLine"": { ""type"": ""string"", ""description"": ""Scripted command line, e.g. '_-Render' or '_-Export ...'."" },
+    ""purpose"": { ""type"": ""string"", ""description"": ""One sentence on what this is meant to achieve. Logged."" }
+  },
+  ""additionalProperties"": false
+}",
+            Handler = (input, ct) => command.Run(RequireStr(input, "commandLine"), RequireStr(input, "purpose"))
+        };
 
         // ── Query ─────────────────────────────────────────────────────
 

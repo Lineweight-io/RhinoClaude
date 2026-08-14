@@ -21,6 +21,7 @@ namespace RhinoClaude.UI
         private readonly TextBox _maxTokens = new TextBox { Width = 80 };
         private readonly CheckBox _enableScript = new CheckBox { Text = "Enable run_rhinocommon_script (Tier 2 escape hatch)" };
         private readonly TextBox _scriptTimeout = new TextBox { Width = 80 };
+        private readonly CheckBox _enableRhinoCommand = new CheckBox { Text = "Enable run_rhino_command (Tier 3 — scripted Rhino commands)" };
         private readonly CheckBox _enableReview = new CheckBox { Text = "Self-review when the agent signals done" };
         private readonly DropDown _reviewerModel = new DropDown { Width = 190 };
         private readonly TextBox _maxReviewCycles = new TextBox { Width = 80 };
@@ -58,6 +59,10 @@ namespace RhinoClaude.UI
             _maxTokens.Text = _settings.MaxTokens.ToString(CultureInfo.InvariantCulture);
             _enableScript.Checked = _settings.EnableScriptTool;
             _scriptTimeout.Text = _settings.ScriptTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+            _enableRhinoCommand.Checked = _settings.EnableRhinoCommandTool;
+            _enableRhinoCommand.ToolTip =
+                "Off by default. Scripted commands are non-atomic and undo less cleanly than the " +
+                "curated tools. The first use in a session raises a notice in the panel.";
 
             _reviewerModel.Items.Add(new ListItem { Text = "Claude Opus 5 (default)", Key = AgentSettings.DefaultReviewerModel });
             _reviewerModel.Items.Add(new ListItem { Text = "Claude Opus 4.8", Key = "claude-opus-4-8" });
@@ -82,6 +87,7 @@ namespace RhinoClaude.UI
             layout.AddRow(new Label { Text = "Max tokens per response", VerticalAlignment = VerticalAlignment.Center }, _maxTokens);
             layout.AddRow(_enableScript, null);
             layout.AddRow(new Label { Text = "Script timeout (seconds)", VerticalAlignment = VerticalAlignment.Center }, _scriptTimeout);
+            layout.AddRow(_enableRhinoCommand, null);
 
             layout.AddRow(Divider(), null);
             layout.AddRow(_enableReview, null);
@@ -200,6 +206,7 @@ namespace RhinoClaude.UI
             _settings.MaxTokens = tokens;
             _settings.EnableScriptTool = _enableScript.Checked == true;
             _settings.ScriptTimeoutSeconds = timeout;
+            _settings.EnableRhinoCommandTool = _enableRhinoCommand.Checked == true;
 
             Close(_settings);
         }

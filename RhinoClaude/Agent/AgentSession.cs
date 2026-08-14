@@ -38,6 +38,8 @@ namespace RhinoClaude.Agent
         void OnBudgetChanged(CostBudget budget);
         /// <summary>Self-review finished. <paramref name="cycle"/> is 1-based.</summary>
         void OnReviewCompleted(ReviewOutcome outcome, int cycle);
+        /// <summary>Old tool results were condensed to keep the conversation affordable.</summary>
+        void OnHistoryCompacted(HistoryCompactor.CompactionReport report);
         void OnTurnFinished(AgentState finalState, string message);
     }
 
@@ -118,6 +120,41 @@ namespace RhinoClaude.Agent
             try { _cts?.Cancel(); }
             catch (ObjectDisposedException) { /* turn already finished */ }
         }
+
+        /// <summary>
+        /// Restore a persisted conversation into this session (plan §2.4 "resume").
+        /// </summary>
+        public void Restore(ConversationSnapshot snapshot)
+        {
+            if (snapshot == null) return;
+            if (IsRunning) throw new InvalidOperationException("Cannot restore while a turn is running.");
+
+            Messages.Clear();
+            Messages.AddRange(snapshot.Messages);
+            Invocations.Clear();   // tool timings are not persisted; the transcript rebuilds from messages
+
+            if (!string.IsNullOrWhiteSpace(snapshot.DisplayName))
+                DisplayName = snapshot.DisplayName;
+
+            LastUserMessage = Messages
+                .Where(m => m.Role == "user" && !m.Content.Any(b => b is ToolResultBlock))
+                .Select(m => m.TextContent())
+                .LastOrDefault(t => !string.IsNullOrWhiteSpace(t));
+
+            State = AgentState.Idle;
+        }
+
+        /// <summary>
+        /// Shrink old tool results (plan §2.4). Called after a turn ships rather than mid-turn,
+        /// so the model never sees its own context change underneath it.
+        /// </summary>
+        public HistoryCompactor.CompactionReport CompactHistory()
+        {
+            return HistoryCompactor.Compact(Messages, HistoryCompactor.DefaultKeepRecentTurns);
+        }
+
+        /// <summary>Rough character weight of the conversation, for the panel's status line.</summary>
+        public int ConversationSize() => HistoryCompactor.MeasureConversation(Messages);
 
         /// <summary>Wipe the conversation but keep the session object (and its undo log) alive.</summary>
         public void Reset()
@@ -317,6 +354,15 @@ namespace RhinoClaude.Agent
                 }
                 finally
                 {
+                    // Compact once the turn has settled — never mid-turn, or the model's own
+                    // context would change underneath it between iterations.
+                    if (State == AgentState.Done || State == AgentState.WaitingForUser)
+                    {
+                        var report = CompactHistory();
+                        if (report.ChangedAnything)
+                            Observer?.OnHistoryCompacted(report);
+                    }
+
                     Observer?.OnTurnFinished(State, finalMessage);
                 }
 
