@@ -114,6 +114,63 @@ namespace RhinoClaude.Tests
         }
 
         [Fact]
+        public void HaikuFourFiveIsPricedAtItsListRateWhicheverIdFormIsUsed()
+        {
+            // The default loop model, so these are the rates almost every turn is billed at.
+            foreach (string id in new[] { "claude-haiku-4-5", "claude-haiku-4-5-20251001" })
+            {
+                var pricing = CostBudget.PricingFor(id, new DateTime(2026, 8, 14));
+
+                Assert.Equal(1.00, pricing.InputPerMTok);
+                Assert.Equal(5.00, pricing.OutputPerMTok);
+                Assert.Equal(1.25, pricing.CacheWritePerMTok, 6);
+                Assert.Equal(0.10, pricing.CacheReadPerMTok, 6);
+            }
+        }
+
+        [Fact]
+        public void HaikuHasNoPromotionalRateToLapse()
+        {
+            Assert.Equal(1.00, CostBudget.PricingFor("claude-haiku-4-5-20251001", new DateTime(2026, 1, 1)).InputPerMTok);
+            Assert.Equal(1.00, CostBudget.PricingFor("claude-haiku-4-5-20251001", new DateTime(2027, 6, 1)).InputPerMTok);
+        }
+
+        [Fact]
+        public void ACachedHaikuTurnIsBilledAtTheCacheRatesNotTheInputRate()
+        {
+            // The two changes in this PR compound: caching moves most of the prefix to the
+            // read rate, and Haiku's read rate is a tenth of $1.00 rather than a tenth of $3.00.
+            var pricing = CostBudget.PricingFor("claude-haiku-4-5-20251001", new DateTime(2026, 8, 14));
+
+            var cached = new TokenUsage
+            {
+                InputTokens = 2_000,
+                OutputTokens = 1_000,
+                CacheCreationInputTokens = 15_000,
+                CacheReadInputTokens = 135_000
+            };
+
+            // 0.002 + 0.005 + 0.01875 + 0.0135
+            Assert.Equal(0.03925, pricing.CostOf(cached), 6);
+
+            // The same 152k input tokens with no caching at all.
+            var uncached = new TokenUsage { InputTokens = 152_000, OutputTokens = 1_000 };
+            Assert.True(pricing.CostOf(cached) < pricing.CostOf(uncached));
+        }
+
+        [Fact]
+        public void TheDefaultLoopModelIsPricedByTheTableRatherThanTheFallback()
+        {
+            // A default whose id the table does not recognise would be silently billed at the
+            // Sonnet fallback, and every budget reading would be wrong by 3x.
+            var pricing = CostBudget.PricingFor(AgentSettings.DefaultLoopModel);
+            var fallback = CostBudget.PricingFor("some-future-model");
+
+            Assert.NotEqual(fallback.InputPerMTok, pricing.InputPerMTok);
+            Assert.Equal(1.00, pricing.InputPerMTok);
+        }
+
+        [Fact]
         public void ModelsWithoutAPromotionalRateIgnoreTheDate()
         {
             Assert.Equal(3.00, CostBudget.PricingFor("claude-sonnet-4-5", new DateTime(2026, 8, 14)).InputPerMTok);

@@ -68,6 +68,14 @@ namespace RhinoClaude.Agent
                 "claude-mythos-5");
         }
 
+        /// <summary>
+        /// The largest <c>max_tokens</c> the model accepts. Every current model tops out at
+        /// 128K except Haiku 4.5, which stops at 64K — so a limit carried over from another
+        /// model is a 400 on every turn rather than a quietly shorter answer.
+        /// </summary>
+        public static int MaxOutputTokens(string modelId) =>
+            MatchesAny(modelId, "claude-haiku-4-5") ? 64000 : 128000;
+
         /// <summary>Clamp an effort level to something the model will accept.</summary>
         public static string ClampEffort(string modelId, string effort)
         {

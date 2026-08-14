@@ -595,6 +595,12 @@ namespace RhinoClaude.Agent
         /// </summary>
         public void ApplyModelCapabilities(string effort, bool showThinking)
         {
+            // A max_tokens carried over from another model is a 400 on every turn, not a
+            // shorter answer. Clamped here as well as in the settings dialog so the wire stays
+            // valid however the value arrived.
+            int ceiling = ModelCapabilities.MaxOutputTokens(Model);
+            if (MaxTokens > ceiling) MaxTokens = ceiling;
+
             if (ModelCapabilities.SupportsAdaptiveThinking(Model))
             {
                 Thinking = new ThinkingConfig

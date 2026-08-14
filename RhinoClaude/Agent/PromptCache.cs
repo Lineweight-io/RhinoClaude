@@ -14,6 +14,12 @@ namespace RhinoClaude.Agent
     ///
     /// Render order is <c>tools</c> → <c>system</c> → <c>messages</c>, which is why the
     /// placement below works out to "everything static, then the conversation so far".
+    ///
+    /// A prefix shorter than the model's minimum caches nothing — silently, with no error.
+    /// That minimum is 4096 tokens on Haiku 4.5, the default loop model, against 1024 on
+    /// Sonnet 5. It does not change the placement: the tool schemas alone are several times
+    /// that, so every breakpoint here sits above the bar on either model. It would matter if
+    /// a breakpoint were ever placed ahead of the tools.
     /// </summary>
     public static class PromptCache
     {

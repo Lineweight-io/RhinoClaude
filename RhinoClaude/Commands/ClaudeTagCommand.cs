@@ -95,7 +95,7 @@ namespace RhinoClaude.Commands
                 // would burn the whole allowance before the JSON was written.
                 var request = new MessagesRequest
                 {
-                    Model = AgentSettings.DefaultLoopModel,
+                    Model = AgentSettings.DefaultUtilityModel,
                     MaxTokens = 2048,
                     Messages = { AgentMessage.User(tagPrompt) }
                 };

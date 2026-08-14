@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using RhinoClaude.Agent;
 using Xunit;
@@ -74,6 +75,20 @@ namespace RhinoClaude.Tests
             Assert.False(ModelCapabilities.ThinksByDefault("claude-sonnet-4-5-20250929"));
         }
 
+        [Fact]
+        public void HaikuFourFiveTakesNeitherThinkingNorEffort()
+        {
+            // Both parameters 400 on Haiku 4.5, and it is now the default loop model, so this
+            // is the failure every turn would hit rather than an edge case.
+            foreach (string id in new[] { "claude-haiku-4-5", "claude-haiku-4-5-20251001" })
+            {
+                Assert.False(ModelCapabilities.SupportsAdaptiveThinking(id));
+                Assert.False(ModelCapabilities.SupportsEffort(id));
+                Assert.False(ModelCapabilities.SupportsXHighEffort(id));
+                Assert.False(ModelCapabilities.ThinksByDefault(id));
+            }
+        }
+
         // ── Request shaping ───────────────────────────────────────────
 
         private static JsonDocument BuildRequest(string model, string effort, bool showThinking)
@@ -126,6 +141,77 @@ namespace RhinoClaude.Tests
         {
             using var doc = BuildRequest("claude-sonnet-4-6", "xhigh", true);
             Assert.Equal("high", doc.RootElement.GetProperty("output_config").GetProperty("effort").GetString());
+        }
+
+        [Fact]
+        public void MaxTokensIsClampedToWhatTheModelAccepts()
+        {
+            // Haiku 4.5 stops at 64K where every other current model reaches 128K, so a limit
+            // carried over from a Sonnet session would otherwise 400 on every turn.
+            var request = new MessagesRequest
+            {
+                Model = AgentSettings.DefaultLoopModel,
+                MaxTokens = 128000,
+                Messages = { AgentMessage.User("hi") }
+            };
+            request.ApplyModelCapabilities("high", showThinking: false);
+
+            Assert.Equal(64000, request.MaxTokens);
+            Assert.Equal(64000, ModelCapabilities.MaxOutputTokens("claude-haiku-4-5-20251001"));
+            Assert.Equal(128000, ModelCapabilities.MaxOutputTokens("claude-sonnet-5"));
+        }
+
+        [Fact]
+        public void AMaxTokensInsideTheCeilingIsLeftAlone()
+        {
+            int DefaultMaxTokens = new AgentSettings().MaxTokens;
+            var request = new MessagesRequest
+            {
+                Model = AgentSettings.DefaultLoopModel,
+                MaxTokens = DefaultMaxTokens,
+                Messages = { AgentMessage.User("hi") }
+            };
+            request.ApplyModelCapabilities("high", showThinking: false);
+
+            Assert.Equal(DefaultMaxTokens, request.MaxTokens);
+        }
+
+        [Fact]
+        public void ATurnOnTheDefaultLoopModelSendsNothingItWouldReject()
+        {
+            // Carried-over settings are the trap: Effort and ShowThinking keep their values
+            // when the model changes, and on Haiku either one reaching the wire is a 400.
+            using var doc = BuildRequest(AgentSettings.DefaultLoopModel, "xhigh", showThinking: true);
+            var root = doc.RootElement;
+
+            Assert.False(root.TryGetProperty("thinking", out _));
+            Assert.False(root.TryGetProperty("output_config", out _));
+            Assert.Equal(AgentSettings.DefaultLoopModel, root.GetProperty("model").GetString());
+        }
+
+        [Fact]
+        public void CachingTheDefaultLoopModelStillPlacesEveryBreakpoint()
+        {
+            // Haiku 4.5 needs a 4096-token prefix before anything caches, against 1024 on
+            // Sonnet 5. The placement does not change — the tool schemas alone clear it — but
+            // a request built for this model must still carry all four markers.
+            var request = new MessagesRequest
+            {
+                Model = AgentSettings.DefaultLoopModel,
+                MaxTokens = 32000,
+                System = "system",
+                Messages =
+                {
+                    AgentMessage.User("hi"),
+                    new AgentMessage("assistant", new TextBlock("working")),
+                    new AgentMessage("user", new TextBlock("result"))
+                },
+                Tools = new List<ToolSpec> { new ToolSpec { Name = "a" }, new ToolSpec { Name = "b" } }
+            };
+            request.ApplyModelCapabilities("high", showThinking: true);
+            PromptCache.Apply(request);
+
+            Assert.Equal(PromptCache.MaxBreakpoints, PromptCache.CountBreakpoints(request));
         }
     }
 

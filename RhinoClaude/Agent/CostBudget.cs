@@ -75,6 +75,8 @@ namespace RhinoClaude.Agent
                                                    introThroughUtc: new DateTime(2026, 8, 31)),
             Rate("claude-opus-4",     5.00, 25.00),
             Rate("claude-opus-5",     5.00, 25.00),
+            // The default loop model, so these are the rates almost every turn is billed at.
+            // List price with no promotional period — cache write $1.25, cache read $0.10.
             Rate("claude-haiku-4-5",  1.00,  5.00),
             Rate("claude-fable-5",   10.00, 50.00),
         };

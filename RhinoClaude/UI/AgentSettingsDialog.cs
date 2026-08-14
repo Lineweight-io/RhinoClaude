@@ -48,7 +48,11 @@ namespace RhinoClaude.UI
             Padding = new Padding(12);
             Resizable = false;
 
-            _model.Items.Add(new ListItem { Text = "Claude Sonnet 5 (default)", Key = AgentSettings.DefaultLoopModel });
+            // Cheapest first, which is also the order someone scanning for a cost decision
+            // reads in. Sonnet 5 keeps an explicit entry now that it is no longer the default —
+            // without one it would be unreachable for anyone who had not already selected it.
+            _model.Items.Add(new ListItem { Text = "Claude Haiku 4.5 (default)", Key = AgentSettings.DefaultLoopModel });
+            _model.Items.Add(new ListItem { Text = "Claude Sonnet 5", Key = "claude-sonnet-5" });
             _model.Items.Add(new ListItem { Text = "Claude Sonnet 4.6", Key = "claude-sonnet-4-6" });
             _model.Items.Add(new ListItem { Text = "Claude Sonnet 4.5 (legacy)", Key = "claude-sonnet-4-5-20250929" });
             _model.Items.Add(new ListItem { Text = "Claude Opus 5", Key = "claude-opus-5" });
@@ -186,9 +190,12 @@ namespace RhinoClaude.UI
                 return;
             }
 
-            if (!int.TryParse(_maxTokens.Text, out int tokens) || tokens < 256 || tokens > 128000)
+            int tokenCeiling = ModelCapabilities.MaxOutputTokens(_model.SelectedKey);
+            if (!int.TryParse(_maxTokens.Text, out int tokens) || tokens < 256 || tokens > tokenCeiling)
             {
-                MessageBox.Show(this, "Max tokens must be between 256 and 128000.", "Invalid value");
+                MessageBox.Show(this,
+                    "Max tokens must be between 256 and " + tokenCeiling + " on this model.",
+                    "Invalid value");
                 return;
             }
 
