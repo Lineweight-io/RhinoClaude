@@ -120,7 +120,7 @@ namespace RhinoClaude.UI
             _statusLabel = new Label { Text = "● Ready", VerticalAlignment = VerticalAlignment.Center };
             _costLabel = new Label
             {
-                Text = "$0.00 / $0.50",
+                Text = string.Format("$0.00 / ${0:0.00}", AgentSettings.DefaultMaxCostUsd),
                 VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = "Click for the per-iteration cost breakdown."
             };
@@ -851,7 +851,7 @@ namespace RhinoClaude.UI
             if (budget == null)
             {
                 var host = Host;
-                double max = host?.Settings.MaxCostUsd ?? 0.50;
+                double max = host?.Settings.MaxCostUsd ?? AgentSettings.DefaultMaxCostUsd;
                 _costLabel.Text = string.Format("$0.00 / ${0:0.00}  |  iter 0/{1}",
                     max, host?.Settings.MaxIterations ?? 25);
                 _costBar.Value = 0;

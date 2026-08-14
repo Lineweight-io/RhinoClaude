@@ -176,7 +176,7 @@ namespace RhinoClaude.UI
             if (!double.TryParse(_maxCost.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double cost) ||
                 cost <= 0)
             {
-                MessageBox.Show(this, "Cost budget must be a positive number, e.g. 0.50.", "Invalid value");
+                MessageBox.Show(this, "Cost budget must be a positive number, e.g. 2.00.", "Invalid value");
                 return;
             }
 
