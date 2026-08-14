@@ -89,12 +89,21 @@ namespace RhinoClaude.Commands
             {
                 // Still one-shot: the output is small and structured, so the agent loop
                 // would only add latency. No tools, no streaming — just the tag JSON.
+                //
+                // Thinking is explicitly disabled. On models that think by default, max_tokens
+                // caps thinking plus the answer together, so a tight budget on a task this small
+                // would burn the whole allowance before the JSON was written.
                 var request = new MessagesRequest
                 {
                     Model = AgentSettings.DefaultLoopModel,
-                    MaxTokens = 1024,
+                    MaxTokens = 2048,
                     Messages = { AgentMessage.User(tagPrompt) }
                 };
+
+                if (ModelCapabilities.SupportsAdaptiveThinking(request.Model))
+                    request.Thinking = new ThinkingConfig { Type = "disabled" };
+                if (ModelCapabilities.SupportsEffort(request.Model))
+                    request.OutputConfig = new OutputConfig { Effort = "low" };
 
                 var task = plugin.AnthropicClient.SendAsync(request, cts.Token);
                 while (!task.IsCompleted)

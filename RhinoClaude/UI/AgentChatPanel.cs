@@ -51,8 +51,11 @@ namespace RhinoClaude.UI
         // Streaming state
         private Label _activeAssistantLabel;
         private readonly StringBuilder _activeAssistantText = new StringBuilder();
+        private Label _activeThinkingLabel;
+        private readonly StringBuilder _activeThinkingText = new StringBuilder();
         private readonly object _textGate = new object();
         private bool _textDirty;
+        private bool _thinkingDirty;
         private UITimer _flushTimer;
 
         private readonly Dictionary<string, ToolCard> _openCards = new Dictionary<string, ToolCard>();
@@ -405,13 +408,19 @@ namespace RhinoClaude.UI
             host.Settings.MaxCostUsd = updated.MaxCostUsd;
             host.Settings.MaxIterations = updated.MaxIterations;
             host.Settings.MaxTokens = updated.MaxTokens;
+            host.Settings.Effort = updated.Effort;
+            host.Settings.ShowThinking = updated.ShowThinking;
             host.Settings.EnableScriptTool = updated.EnableScriptTool;
             host.Settings.ScriptTimeoutSeconds = updated.ScriptTimeoutSeconds;
             host.ApplySettings();
 
+            string effortNote = ModelCapabilities.SupportsEffort(host.Settings.LoopModel)
+                ? ", effort " + ModelCapabilities.ClampEffort(host.Settings.LoopModel, host.Settings.Effort)
+                : " (this model has no effort setting)";
+
             AppendSystemNote("Settings updated. Model: " + host.Settings.LoopModel +
                              ", budget $" + host.Settings.MaxCostUsd.ToString("0.00") +
-                             ", max " + host.Settings.MaxIterations + " iterations.");
+                             ", max " + host.Settings.MaxIterations + " iterations" + effortNote + ".");
 
             if (scriptWas != host.Settings.EnableScriptTool)
                 AppendSystemNote("The script tool was toggled — that takes effect in the next session (⟲ New).");
@@ -456,6 +465,22 @@ namespace RhinoClaude.UI
         public void OnAssistantTextBlockClosed() =>
             Application.Instance.AsyncInvoke(FlushStreamedText);
 
+        public void OnThinkingBlockStarted() =>
+            Application.Instance.AsyncInvoke(() =>
+            {
+                lock (_textGate) { _activeThinkingText.Clear(); _thinkingDirty = false; }
+                _activeThinkingLabel = null;
+            });
+
+        public void OnThinkingDelta(string chunk)
+        {
+            lock (_textGate)
+            {
+                _activeThinkingText.Append(chunk);
+                _thinkingDirty = true;
+            }
+        }
+
         public void OnToolInvocationStarted(string toolUseId, string toolName) =>
             Application.Instance.AsyncInvoke(() =>
             {
@@ -485,6 +510,7 @@ namespace RhinoClaude.UI
             {
                 FlushStreamedText();
                 _activeAssistantLabel = null;
+                _activeThinkingLabel = null;
 
                 if (finalState != AgentState.Done && !string.IsNullOrWhiteSpace(message))
                     AppendSystemNote(message);
@@ -501,6 +527,8 @@ namespace RhinoClaude.UI
 
         private void FlushStreamedText()
         {
+            FlushThinking();
+
             string text;
             lock (_textGate)
             {
@@ -521,11 +549,62 @@ namespace RhinoClaude.UI
             ScrollToBottom();
         }
 
+        /// <summary>
+        /// Summarized reasoning renders above the answer in a muted, collapsed card — visible
+        /// if you want it, out of the way if you don't.
+        /// </summary>
+        private void FlushThinking()
+        {
+            string text;
+            lock (_textGate)
+            {
+                if (!_thinkingDirty) return;
+                _thinkingDirty = false;
+                text = _activeThinkingText.ToString();
+            }
+
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            if (_activeThinkingLabel == null)
+            {
+                _activeThinkingLabel = new Label
+                {
+                    Wrap = WrapMode.Word,
+                    TextColor = Color.FromArgb(130, 130, 130),
+                    Font = SystemFonts.Default(SystemFonts.Default().Size - 1)
+                };
+
+                _messages.Items.Add(new StackLayoutItem(new Expander
+                {
+                    Header = new Label
+                    {
+                        Text = "▸ thinking",
+                        TextColor = Color.FromArgb(130, 130, 130),
+                        Font = SystemFonts.Default(SystemFonts.Default().Size - 1)
+                    },
+                    Content = new Eto.Forms.Panel
+                    {
+                        Padding = new Padding(12, 2, 4, 4),
+                        Content = _activeThinkingLabel
+                    },
+                    Expanded = false
+                }));
+            }
+
+            _activeThinkingLabel.Text = text;
+            ScrollToBottom();
+        }
+
         private void AppendUserMessage(string text)
         {
             // The previous assistant bubble is finished; start a new one next time.
-            lock (_textGate) { _activeAssistantText.Clear(); _textDirty = false; }
+            lock (_textGate)
+            {
+                _activeAssistantText.Clear(); _textDirty = false;
+                _activeThinkingText.Clear(); _thinkingDirty = false;
+            }
             _activeAssistantLabel = null;
+            _activeThinkingLabel = null;
 
             _messages.Items.Add(new StackLayoutItem(Bubble("You",
                 new Label { Text = text, Wrap = WrapMode.Word },

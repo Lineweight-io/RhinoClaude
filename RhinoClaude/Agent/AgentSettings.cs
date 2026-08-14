@@ -8,13 +8,35 @@ namespace RhinoClaude.Agent
     /// </summary>
     public sealed class AgentSettings
     {
-        /// <summary>Loop model (plan §8.1). Sonnet 4.5 is a dated snapshot id, deliberately pinned.</summary>
-        public const string DefaultLoopModel = "claude-sonnet-4-5-20250929";
+        /// <summary>
+        /// Loop model. The plan named Sonnet 4.5; Sonnet 5 supersedes it at the same
+        /// $3/$15 per MTok with markedly better agentic and coding behaviour.
+        /// </summary>
+        public const string DefaultLoopModel = "claude-sonnet-5";
 
         public string LoopModel { get; set; } = DefaultLoopModel;
         public double MaxCostUsd { get; set; } = 0.50;
         public int MaxIterations { get; set; } = 25;
-        public int MaxTokens { get; set; } = 16384;
+
+        /// <summary>
+        /// Caps thinking plus response text together on models that think by default, so this
+        /// needs more headroom than a non-thinking model would want. Requests always stream,
+        /// so there is no HTTP-timeout reason to keep it small.
+        /// </summary>
+        public int MaxTokens { get; set; } = 32000;
+
+        /// <summary>
+        /// <c>output_config.effort</c>. 'high' is the API default; 'xhigh' suits the hardest
+        /// agentic work, 'medium' is the cost-saving step down. Ignored on models without it.
+        /// </summary>
+        public string Effort { get; set; } = "high";
+
+        /// <summary>
+        /// Request summarized thinking and render it in the sidebar. Thinking is billed
+        /// identically either way — this only controls whether the reasoning is visible
+        /// instead of appearing as a silent pause before output.
+        /// </summary>
+        public bool ShowThinking { get; set; } = true;
 
         /// <summary>Coalescing interval for streamed text, per the plan's risk #2.</summary>
         public int UiFlushIntervalMs { get; set; } = 33;
@@ -39,6 +61,8 @@ namespace RhinoClaude.Agent
             MaxCostUsd = MaxCostUsd,
             MaxIterations = MaxIterations,
             MaxTokens = MaxTokens,
+            Effort = Effort,
+            ShowThinking = ShowThinking,
             UiFlushIntervalMs = UiFlushIntervalMs,
             EnableScriptTool = EnableScriptTool,
             ScriptTimeoutSeconds = ScriptTimeoutSeconds,

@@ -15,6 +15,8 @@ one click.
   tool-call cards with input/result JSON, screenshot thumbnails, a live cost meter and
   iteration counter, session dropdown, and a settings gear.
 - **Streaming tool-use loop** — SSE from the first request. Claude plans, calls tools, reads
+  the results, and iterates until it signals done or hits a guardrail. Summarized reasoning
+  streams into a collapsed card above each answer.
   the results, and iterates until it signals done or hits a guardrail.
 - **Guardrails** — $0.50 per turn and 25 iterations by default, both configurable. The loop
   stops before the next model call rather than mid-mutation.
@@ -183,16 +185,37 @@ Behind the gear in the sidebar header:
 
 | Setting | Default |
 |---|---|
-| Loop model | `claude-sonnet-4-5-20250929` |
+| Loop model | `claude-sonnet-5` |
+| Effort | `high` |
+| Show summarized reasoning | on |
 | Cost budget per turn | $0.50 |
 | Max iterations per turn | 25 |
-| Max tokens per response | 16384 |
+| Max tokens per response | 32000 |
 | Script tool enabled | yes |
 | Script timeout | 15s (max 60s) |
 
-Model, budget, iteration and token changes apply to the next turn. Toggling the script tool
-changes the tool set, which is fixed for a session's lifetime — that one takes effect on the
-next **⟲ New** session.
+Model, budget, iteration, token, effort and reasoning-display changes apply to the next turn.
+Toggling the script tool changes the tool set, which is fixed for a session's lifetime — that
+one takes effect on the next **⟲ New** session.
+
+**Effort** controls how much the model thinks and how hard it works. `high` is the API default;
+`xhigh` suits the hardest agentic work, `medium` is the cost-saving step down. It is greyed out
+on models that have no effort parameter.
+
+**Max tokens** caps thinking *plus* the response together on models that think by default
+(Sonnet 5, Opus 5), which is why the default is 32000 rather than a value tuned for a
+non-thinking model. Requests always stream, so there is no timeout reason to keep it small.
+
+### Model compatibility
+
+The request shape is built per model rather than pinned to one, because the parameters are not
+interchangeable — sending `thinking` or `output_config.effort` to Sonnet 4.5 is a 400, while
+*omitting* `thinking` on Sonnet 5 silently leaves adaptive thinking on. `ModelCapabilities`
+holds that matrix and the settings dialog greys out whatever the selected model won't accept.
+
+Thinking blocks are accumulated with their **signature** and replayed unchanged on every
+iteration. That is load-bearing, not cosmetic: the API validates the signature, and a tool-use
+loop replays the whole conversation on each pass.
 
 ## Troubleshooting
 

@@ -31,6 +31,10 @@ namespace RhinoClaude.Agent
         /// Rates keyed by model-id prefix, longest match wins. Cache-write is 1.25x input
         /// and cache-read is 0.1x input for every current model, so only the two base
         /// rates need maintaining per entry.
+        ///
+        /// Sonnet 5 carries introductory pricing ($2/$10) through 2026-08-31. The list rate is
+        /// used instead, so the meter over-estimates slightly until then rather than encoding
+        /// a cutoff date that silently becomes wrong.
         /// </summary>
         private static readonly List<KeyValuePair<string, ModelPricing>> Table =
             new List<KeyValuePair<string, ModelPricing>>

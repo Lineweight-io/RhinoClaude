@@ -32,6 +32,7 @@
     <Compile Include="..\RhinoClaude\Agent\SseParser.cs" Link="Linked\SseParser.cs" />
     <Compile Include="..\RhinoClaude\Agent\StreamAccumulator.cs" Link="Linked\StreamAccumulator.cs" />
     <Compile Include="..\RhinoClaude\Agent\CostBudget.cs" Link="Linked\CostBudget.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ModelCapabilities.cs" Link="Linked\ModelCapabilities.cs" />
     <Compile Include="..\RhinoClaude\Agent\UndoScope.cs" Link="Linked\UndoScope.cs" />
     <Compile Include="..\RhinoClaude\Agent\ToolContracts.cs" Link="Linked\ToolContracts.cs" />
     <Compile Include="..\RhinoClaude\Agent\ToolRegistry.cs" Link="Linked\ToolRegistry.cs" />

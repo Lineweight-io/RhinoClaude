@@ -11,6 +11,8 @@ namespace RhinoClaude.Agent
         MessageStart,
         TextBlockStart,
         TextDelta,
+        ThinkingBlockStart,
+        ThinkingDelta,
         ToolUseBlockStart,
         ToolInputDelta,
         BlockStop,
@@ -41,6 +43,8 @@ namespace RhinoClaude.Agent
         private readonly Dictionary<int, ContentBlock> _blocks = new Dictionary<int, ContentBlock>();
         private readonly Dictionary<int, StringBuilder> _partialJson = new Dictionary<int, StringBuilder>();
         private readonly Dictionary<int, StringBuilder> _partialText = new Dictionary<int, StringBuilder>();
+        private readonly Dictionary<int, StringBuilder> _partialThinking = new Dictionary<int, StringBuilder>();
+        private readonly Dictionary<int, StringBuilder> _partialSignature = new Dictionary<int, StringBuilder>();
 
         /// <summary>Populated as <c>message_delta</c> events arrive.</summary>
         public TokenUsage Usage { get; } = new TokenUsage();
@@ -131,6 +135,28 @@ namespace RhinoClaude.Agent
                                 return new StreamNotification { Kind = StreamEventKind.TextBlockStart, BlockIndex = index };
                             }
 
+                            if (blockType == "thinking")
+                            {
+                                var block = new ThinkingBlock
+                                {
+                                    Thinking = cb.TryGetProperty("thinking", out var th) ? th.GetString() : string.Empty,
+                                    Signature = cb.TryGetProperty("signature", out var sg) ? sg.GetString() : null
+                                };
+                                _blocks[index] = block;
+                                _partialThinking[index] = new StringBuilder(block.Thinking ?? string.Empty);
+                                _partialSignature[index] = new StringBuilder(block.Signature ?? string.Empty);
+                                return new StreamNotification { Kind = StreamEventKind.ThinkingBlockStart, BlockIndex = index };
+                            }
+
+                            if (blockType == "redacted_thinking")
+                            {
+                                _blocks[index] = new RedactedThinkingBlock
+                                {
+                                    Data = cb.TryGetProperty("data", out var rd) ? rd.GetString() : null
+                                };
+                                return null;
+                            }
+
                             if (blockType == "tool_use")
                             {
                                 var block = new ToolUseBlock
@@ -178,6 +204,39 @@ namespace RhinoClaude.Agent
                                     BlockIndex = index,
                                     Text = chunk
                                 };
+                            }
+
+                            if (deltaType == "thinking_delta")
+                            {
+                                string chunk = delta.TryGetProperty("thinking", out var dth) ? dth.GetString() : string.Empty;
+                                if (!_partialThinking.TryGetValue(index, out var sb))
+                                {
+                                    sb = new StringBuilder();
+                                    _partialThinking[index] = sb;
+                                    if (!_blocks.ContainsKey(index)) _blocks[index] = new ThinkingBlock();
+                                }
+                                sb.Append(chunk);
+                                return new StreamNotification
+                                {
+                                    Kind = StreamEventKind.ThinkingDelta,
+                                    BlockIndex = index,
+                                    Text = chunk
+                                };
+                            }
+
+                            if (deltaType == "signature_delta")
+                            {
+                                // Never surfaced to the UI — it exists only so the block can be
+                                // replayed unchanged on the next request.
+                                string chunk = delta.TryGetProperty("signature", out var dsg) ? dsg.GetString() : string.Empty;
+                                if (!_partialSignature.TryGetValue(index, out var sb))
+                                {
+                                    sb = new StringBuilder();
+                                    _partialSignature[index] = sb;
+                                    if (!_blocks.ContainsKey(index)) _blocks[index] = new ThinkingBlock();
+                                }
+                                sb.Append(chunk);
+                                return null;
                             }
 
                             if (deltaType == "input_json_delta")
@@ -237,6 +296,17 @@ namespace RhinoClaude.Agent
 
             if (block is TextBlock text && _partialText.TryGetValue(index, out var textSb))
                 text.Text = textSb.ToString();
+
+            if (block is ThinkingBlock thinking)
+            {
+                if (_partialThinking.TryGetValue(index, out var thinkingSb))
+                    thinking.Thinking = thinkingSb.ToString();
+                if (_partialSignature.TryGetValue(index, out var signatureSb))
+                {
+                    string signature = signatureSb.ToString();
+                    thinking.Signature = signature.Length == 0 ? null : signature;
+                }
+            }
 
             if (block is ToolUseBlock toolUse && _partialJson.TryGetValue(index, out var jsonSb))
             {

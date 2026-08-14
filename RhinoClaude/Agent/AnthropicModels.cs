@@ -70,6 +70,28 @@ namespace RhinoClaude.Agent
         public bool IsError { get; set; }
     }
 
+    /// <summary>
+    /// A thinking block from a model with adaptive thinking on.
+    ///
+    /// The signature matters more than the text: with the default
+    /// <c>display: "omitted"</c> the text is empty, but the block still has to be replayed
+    /// byte-identical on the next request or the API rejects the turn. Both fields are
+    /// accumulated from <c>thinking_delta</c> / <c>signature_delta</c> events.
+    /// </summary>
+    public sealed class ThinkingBlock : ContentBlock
+    {
+        public override string Type => "thinking";
+        public string Thinking { get; set; } = string.Empty;
+        public string Signature { get; set; }
+    }
+
+    /// <summary>Encrypted thinking. Opaque — replayed verbatim, never inspected.</summary>
+    public sealed class RedactedThinkingBlock : ContentBlock
+    {
+        public override string Type => "redacted_thinking";
+        public string Data { get; set; }
+    }
+
     /// <summary>Base64 image, used inside tool results for view captures.</summary>
     public sealed class ImageBlock : ContentBlock
     {
@@ -136,6 +158,19 @@ namespace RhinoClaude.Agent
                             return block;
                         }
 
+                    case "thinking":
+                        return new ThinkingBlock
+                        {
+                            Thinking = root.TryGetProperty("thinking", out var th) ? th.GetString() : string.Empty,
+                            Signature = root.TryGetProperty("signature", out var sg) ? sg.GetString() : null
+                        };
+
+                    case "redacted_thinking":
+                        return new RedactedThinkingBlock
+                        {
+                            Data = root.TryGetProperty("data", out var rd) ? rd.GetString() : null
+                        };
+
                     case "image":
                         {
                             string media = "image/png";
@@ -198,6 +233,19 @@ namespace RhinoClaude.Agent
                 foreach (var child in toolResult.Content)
                     Write(writer, child, options);
                 writer.WriteEndArray();
+            }
+            else if (value is ThinkingBlock thinking)
+            {
+                writer.WriteString("type", "thinking");
+                writer.WriteString("thinking", thinking.Thinking ?? string.Empty);
+                // The signature is what the API validates; omit rather than emit null.
+                if (!string.IsNullOrEmpty(thinking.Signature))
+                    writer.WriteString("signature", thinking.Signature);
+            }
+            else if (value is RedactedThinkingBlock redacted)
+            {
+                writer.WriteString("type", "redacted_thinking");
+                writer.WriteString("data", redacted.Data ?? string.Empty);
             }
             else if (value is ImageBlock image)
             {
@@ -333,6 +381,29 @@ namespace RhinoClaude.Agent
         }
     }
 
+    /// <summary>
+    /// Adaptive thinking. <c>display: "summarized"</c> costs nothing extra — thinking is billed
+    /// the same under every setting — and it lets the sidebar show why Claude chose the
+    /// dimensions it did instead of a silent pause.
+    /// </summary>
+    public sealed class ThinkingConfig
+    {
+        [JsonPropertyName("type")]
+        public string Type { get; set; } = "adaptive";
+
+        [JsonPropertyName("display")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string Display { get; set; }
+    }
+
+    /// <summary>Carries <c>effort</c>, which is nested here rather than top-level.</summary>
+    public sealed class OutputConfig
+    {
+        [JsonPropertyName("effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string Effort { get; set; }
+    }
+
     public sealed class MessagesRequest
     {
         [JsonPropertyName("model")]
@@ -355,6 +426,37 @@ namespace RhinoClaude.Agent
         [JsonPropertyName("stream")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? Stream { get; set; }
+
+        /// <summary>Omitted entirely on models that do not accept it — see <see cref="ModelCapabilities"/>.</summary>
+        [JsonPropertyName("thinking")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public ThinkingConfig Thinking { get; set; }
+
+        [JsonPropertyName("output_config")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public OutputConfig OutputConfig { get; set; }
+
+        /// <summary>
+        /// Populate <see cref="Thinking"/> and <see cref="OutputConfig"/> for the target model,
+        /// leaving them null where the model would reject them.
+        /// </summary>
+        public void ApplyModelCapabilities(string effort, bool showThinking)
+        {
+            if (ModelCapabilities.SupportsAdaptiveThinking(Model))
+            {
+                Thinking = new ThinkingConfig
+                {
+                    Type = "adaptive",
+                    Display = showThinking ? "summarized" : null
+                };
+            }
+
+            string clamped = ModelCapabilities.SupportsEffort(Model)
+                ? ModelCapabilities.ClampEffort(Model, effort)
+                : null;
+
+            OutputConfig = string.IsNullOrEmpty(clamped) ? null : new OutputConfig { Effort = clamped };
+        }
 
         // global:: is required — the System property on this class otherwise shadows the
         // System namespace inside the initializer.

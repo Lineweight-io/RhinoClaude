@@ -137,13 +137,16 @@ namespace RhinoClaude.Tests
         [Fact]
         public void PreservesUnknownBlockTypesVerbatim()
         {
+            // A block type this client does not model — server tool use, or anything the API
+            // adds later. It must survive into history rather than being dropped, or the
+            // replayed assistant turn no longer matches what the model produced.
             const string payload =
-                "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"…\"}}\n\n" +
+                "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\"}}\n\n" +
                 "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n";
 
             var block = Assert.Single(Feed(payload).BuildMessage().Content);
             Assert.IsType<UnknownBlock>(block);
-            Assert.Equal("thinking", block.Type);
+            Assert.Equal("server_tool_use", block.Type);
         }
 
         [Fact]

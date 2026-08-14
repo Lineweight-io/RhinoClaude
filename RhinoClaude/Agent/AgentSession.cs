@@ -27,6 +27,9 @@ namespace RhinoClaude.Agent
         void OnUserTurn(string text);
         void OnAssistantTextDelta(string chunk);
         void OnAssistantTextBlockClosed();
+        /// <summary>Summarized reasoning, when the model and settings surface it.</summary>
+        void OnThinkingDelta(string chunk);
+        void OnThinkingBlockStarted();
         void OnToolInvocationStarted(string toolUseId, string toolName);
         void OnToolInvocationFinished(ToolInvocation invocation);
         void OnBudgetChanged(CostBudget budget);
@@ -159,6 +162,7 @@ namespace RhinoClaude.Agent
                             Messages = Messages,
                             Tools = _registry.ToSpecs()
                         };
+                        request.ApplyModelCapabilities(Settings.Effort, Settings.ShowThinking);
 
                         var accumulator = await _client.StreamAsync(request, OnStreamNotification, token)
                                                        .ConfigureAwait(false);
@@ -267,6 +271,12 @@ namespace RhinoClaude.Agent
             {
                 case StreamEventKind.TextDelta:
                     Observer?.OnAssistantTextDelta(notification.Text);
+                    break;
+                case StreamEventKind.ThinkingBlockStart:
+                    Observer?.OnThinkingBlockStarted();
+                    break;
+                case StreamEventKind.ThinkingDelta:
+                    Observer?.OnThinkingDelta(notification.Text);
                     break;
                 case StreamEventKind.BlockStop:
                     Observer?.OnAssistantTextBlockClosed();

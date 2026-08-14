@@ -14,6 +14,8 @@ namespace RhinoClaude.UI
         private readonly AgentSettings _settings;
 
         private readonly DropDown _model = new DropDown();
+        private readonly DropDown _effort = new DropDown { Width = 110 };
+        private readonly CheckBox _showThinking = new CheckBox { Text = "Show summarized reasoning in the panel" };
         private readonly TextBox _maxCost = new TextBox { Width = 80 };
         private readonly TextBox _maxIterations = new TextBox { Width = 80 };
         private readonly TextBox _maxTokens = new TextBox { Width = 80 };
@@ -28,17 +30,25 @@ namespace RhinoClaude.UI
             Padding = new Padding(12);
             Resizable = false;
 
-            _model.Items.Add(new ListItem { Text = "Claude Sonnet 4.5 (default)", Key = AgentSettings.DefaultLoopModel });
+            _model.Items.Add(new ListItem { Text = "Claude Sonnet 5 (default)", Key = AgentSettings.DefaultLoopModel });
             _model.Items.Add(new ListItem { Text = "Claude Sonnet 4.6", Key = "claude-sonnet-4-6" });
-            _model.Items.Add(new ListItem { Text = "Claude Sonnet 5", Key = "claude-sonnet-5" });
-            _model.Items.Add(new ListItem { Text = "Claude Opus 4.8", Key = "claude-opus-4-8" });
+            _model.Items.Add(new ListItem { Text = "Claude Sonnet 4.5 (legacy)", Key = "claude-sonnet-4-5-20250929" });
             _model.Items.Add(new ListItem { Text = "Claude Opus 5", Key = "claude-opus-5" });
+            _model.Items.Add(new ListItem { Text = "Claude Opus 4.8", Key = "claude-opus-4-8" });
             _model.SelectedKey = _settings.LoopModel;
             if (_model.SelectedIndex < 0)
             {
                 _model.Items.Add(new ListItem { Text = _settings.LoopModel, Key = _settings.LoopModel });
                 _model.SelectedKey = _settings.LoopModel;
             }
+            _model.SelectedKeyChanged += (s, e) => RefreshModelDependentControls();
+
+            foreach (var level in ModelCapabilities.EffortLevels)
+                _effort.Items.Add(new ListItem { Text = level, Key = level });
+            _effort.SelectedKey = _settings.Effort ?? "high";
+            if (_effort.SelectedIndex < 0) _effort.SelectedKey = "high";
+
+            _showThinking.Checked = _settings.ShowThinking;
 
             _maxCost.Text = _settings.MaxCostUsd.ToString("0.00", CultureInfo.InvariantCulture);
             _maxIterations.Text = _settings.MaxIterations.ToString(CultureInfo.InvariantCulture);
@@ -49,6 +59,8 @@ namespace RhinoClaude.UI
             var layout = new DynamicLayout { DefaultSpacing = new Size(8, 8) };
 
             layout.AddRow(new Label { Text = "Loop model", VerticalAlignment = VerticalAlignment.Center }, _model);
+            layout.AddRow(new Label { Text = "Effort", VerticalAlignment = VerticalAlignment.Center }, _effort);
+            layout.AddRow(_showThinking, null);
             layout.AddRow(new Label { Text = "Cost budget per turn (USD)", VerticalAlignment = VerticalAlignment.Center }, _maxCost);
             layout.AddRow(new Label { Text = "Max iterations per turn", VerticalAlignment = VerticalAlignment.Center }, _maxIterations);
             layout.AddRow(new Label { Text = "Max tokens per response", VerticalAlignment = VerticalAlignment.Center }, _maxTokens);
@@ -81,6 +93,28 @@ namespace RhinoClaude.UI
             }, null);
 
             Content = layout;
+            RefreshModelDependentControls();
+        }
+
+        /// <summary>
+        /// Effort and summarized thinking only exist on some models — grey them out rather than
+        /// letting a setting look active while the request silently omits it.
+        /// </summary>
+        private void RefreshModelDependentControls()
+        {
+            string model = _model.SelectedKey;
+
+            bool effortSupported = ModelCapabilities.SupportsEffort(model);
+            _effort.Enabled = effortSupported;
+            _effort.ToolTip = effortSupported
+                ? "Controls how much the model thinks and how hard it works. 'high' is the API default."
+                : "This model has no effort parameter; the setting is ignored.";
+
+            bool thinkingSupported = ModelCapabilities.SupportsAdaptiveThinking(model);
+            _showThinking.Enabled = thinkingSupported;
+            _showThinking.ToolTip = thinkingSupported
+                ? "Thinking is billed the same whether or not it is displayed."
+                : "This model does not support adaptive thinking; the setting is ignored.";
         }
 
         private static Control Divider() => new Eto.Forms.Panel
@@ -104,10 +138,22 @@ namespace RhinoClaude.UI
                 return;
             }
 
-            if (!int.TryParse(_maxTokens.Text, out int tokens) || tokens < 256 || tokens > 64000)
+            if (!int.TryParse(_maxTokens.Text, out int tokens) || tokens < 256 || tokens > 128000)
             {
-                MessageBox.Show(this, "Max tokens must be between 256 and 64000.", "Invalid value");
+                MessageBox.Show(this, "Max tokens must be between 256 and 128000.", "Invalid value");
                 return;
+            }
+
+            // On a model that thinks by default, max_tokens caps thinking plus the answer, so a
+            // small limit truncates mid-response rather than merely shortening it.
+            if (ModelCapabilities.ThinksByDefault(_model.SelectedKey) && tokens < 8000)
+            {
+                var proceed = MessageBox.Show(this,
+                    "This model thinks by default, and max tokens caps thinking plus the response " +
+                    "together. " + tokens + " is low enough that answers will likely be cut off " +
+                    "mid-sentence.\n\nUse it anyway?",
+                    "Low max tokens", MessageBoxButtons.YesNo, MessageBoxType.Warning);
+                if (proceed != DialogResult.Yes) return;
             }
 
             if (!int.TryParse(_scriptTimeout.Text, out int timeout) || timeout < 1 || timeout > 60)
@@ -117,6 +163,8 @@ namespace RhinoClaude.UI
             }
 
             _settings.LoopModel = _model.SelectedKey;
+            _settings.Effort = _effort.SelectedKey ?? "high";
+            _settings.ShowThinking = _showThinking.Checked == true;
             _settings.MaxCostUsd = cost;
             _settings.MaxIterations = iterations;
             _settings.MaxTokens = tokens;

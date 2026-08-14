@@ -90,14 +90,17 @@ namespace RhinoClaude.Tests
         [Fact]
         public void UnknownBlockSurvivesUnchanged()
         {
-            const string raw = "{\"type\":\"thinking\",\"thinking\":\"…\",\"signature\":\"sig\"}";
+            // Any block type this client does not model round-trips as its original JSON, so
+            // fields we know nothing about are not lost when the turn is replayed.
+            const string raw = "{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{\"query\":\"x\"}}";
 
             var restored = Assert.IsType<UnknownBlock>(Read(raw));
             var rewritten = Write(restored);
 
             using var doc = JsonDocument.Parse(rewritten);
-            Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
-            Assert.Equal("sig", doc.RootElement.GetProperty("signature").GetString());
+            Assert.Equal("server_tool_use", doc.RootElement.GetProperty("type").GetString());
+            Assert.Equal("srvtoolu_1", doc.RootElement.GetProperty("id").GetString());
+            Assert.Equal("x", doc.RootElement.GetProperty("input").GetProperty("query").GetString());
         }
 
         [Fact]
