@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Rhino;
+using RhinoClaude.Semantic;
 using RhinoClaude.Services.Agent;
 using RhinoClaude.Services.Semantic;
 using RhinoClaude.Tools;
@@ -127,7 +128,17 @@ namespace RhinoClaude.Agent
 
             Review = new SelfReviewService(Query, Capture, client, Mutation.MutationLog)
             {
-                ReviewerModel = Settings.ReviewerModel
+                ReviewerModel = Settings.ReviewerModel,
+
+                // Plan phase E: composition facts feed the reviewer the same way phase 1's
+                // deterministic checks do. Judging "does this massing work" off a screenshot
+                // alone is exactly the guessing the doc-engine principle exists to stop.
+                MassingCompositionProvider = () =>
+                {
+                    if (!Settings.EnableSemanticTools) return null;
+                    var snapshot = new MassingSnapshot(Elements.View, Elements.AllGeometry(), Elements.Units);
+                    return MassingComposition.Summarize(MassingComposition.Compute(snapshot), Elements.Units);
+                }
             };
 
             Registry = BuildRegistry();

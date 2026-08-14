@@ -33,6 +33,17 @@ namespace RhinoClaude.Agent
         public string Units { get; set; }
         public int ShotCount { get; set; }
 
+        /// <summary>
+        /// Deterministic composition facts from <c>check_massing_composition</c> — proportions,
+        /// symmetry, mass hierarchy, boolean composition (semantic plan phase E).
+        ///
+        /// Same principle as the checks above, one level up: the reviewer is being asked
+        /// whether the massing is right, and "the primary mass carries 71% of the volume, the
+        /// envelope is 4.4:1, symmetry about Y is 0.12" is a far better basis for that judgment
+        /// than the image alone. Null when the semantic layer is off or the document has no masses.
+        /// </summary>
+        public string MassingComposition { get; set; }
+
         public bool AllChecksPassed => Checks.All(c => c.Passed);
         public IEnumerable<CheckResult> Failures => Checks.Where(c => !c.Passed);
     }
@@ -170,6 +181,14 @@ are not defects.";
             }
             sb.AppendLine("</checks>");
             sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(facts.MassingComposition))
+            {
+                sb.AppendLine("<massing_composition>");
+                sb.AppendLine(facts.MassingComposition);
+                sb.AppendLine("</massing_composition>");
+                sb.AppendLine();
+            }
 
             sb.Append(facts.ShotCount == 0
                 ? "No screenshots were available — judge from the facts above, and prefer ship unless a check clearly failed."

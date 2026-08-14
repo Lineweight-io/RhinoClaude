@@ -229,6 +229,34 @@ namespace RhinoClaude.UI
             }
         }
 
+        private bool _conventionHintShown;
+
+        /// <summary>
+        /// The onboarding surface from semantic plan §8. Shown once per panel, and only when
+        /// the classifier actually found nothing — a user whose masses already classify does
+        /// not need to be told about a layer convention they are evidently following.
+        /// </summary>
+        private void ShowConventionHintOnce(AgentHost host)
+        {
+            if (_conventionHintShown || !host.Settings.EnableSemanticTools) return;
+            _conventionHintShown = true;
+
+            try
+            {
+                if (host.Elements.View.Masses.Count > 0) return;
+            }
+            catch (Exception)
+            {
+                return;   // a classifier failure must not block the turn
+            }
+
+            AppendSystemNote(
+                "New to semantic queries? Claude found no building masses in this document. " +
+                "At minimum, put your masses on MASS_* layers — see LAYER_CONVENTIONS.md. " +
+                "Or run ClaudeLearnNamingConvention to teach Claude your firm's convention, " +
+                "or ClaudeSetElement to tag individual solids.");
+        }
+
         private async void SendTurn()
         {
             var host = Host;
@@ -256,6 +284,8 @@ namespace RhinoClaude.UI
                 if (ids.Count > 0)
                     text += "\n\n[SELECTION: " + string.Join(", ", ids) + "]";
             }
+
+            ShowConventionHintOnce(host);
 
             _input.Text = string.Empty;
             host.Session.Observer = this;

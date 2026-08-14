@@ -45,6 +45,16 @@ namespace RhinoClaude.Services.Agent
         public string ReviewerModel { get; set; } = AgentSettings.DefaultReviewerModel;
         public int MaxTokens { get; set; } = 4096;
 
+        /// <summary>
+        /// Supplies check_massing_composition's deterministic facts to the reviewer prompt
+        /// (semantic plan phase E). Set by <c>AgentHost</c> when the semantic layer is on; null
+        /// otherwise, and the reviewer prompt is unchanged from phase 1.
+        ///
+        /// Injected rather than referenced so this service keeps knowing nothing about the
+        /// semantic layer — the phase 1 reviewer still works with the semantic tools switched off.
+        /// </summary>
+        public Func<string> MassingCompositionProvider { get; set; }
+
         // ── Deterministic checks (plan §5.2) ──────────────────────────
 
         /// <summary>UI-thread only. Cheap enough to run on every review.</summary>
@@ -84,7 +94,26 @@ namespace RhinoClaude.Services.Agent
             var tagCheck = CheckTagCoverage(userRequest, objects);
             if (tagCheck != null) facts.Checks.Add(tagCheck);
 
+            facts.MassingComposition = SafeMassingComposition();
+
             return facts;
+        }
+
+        /// <summary>
+        /// A classifier failure must not cost the review. Whatever goes wrong in there, the
+        /// reviewer still gets the checks and the screenshots.
+        /// </summary>
+        private string SafeMassingComposition()
+        {
+            if (MassingCompositionProvider == null) return null;
+            try
+            {
+                return MassingCompositionProvider();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static CheckResult CheckObjectsStillExist(int expected, int actual)

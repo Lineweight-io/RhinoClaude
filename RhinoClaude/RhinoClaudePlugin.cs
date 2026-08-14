@@ -33,7 +33,7 @@ namespace RhinoClaude
         /// </summary>
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
-            RhinoApp.WriteLine("RhinoClaude plugin loaded (agent refactor — phase 1).");
+            RhinoApp.WriteLine("RhinoClaude plugin loaded (agent refactor + semantic layer).");
 
             AnthropicClient = new AnthropicClient();
             TagService = new TagService();
@@ -78,6 +78,7 @@ namespace RhinoClaude
             RhinoApp.WriteLine(
                 "RhinoClaude: run 'ClaudeChat' to open the agent panel. " +
                 "Other commands — ClaudeSetKey, ClaudeTag, ClaudeRevertSession, ClaudeAddReviewView, " +
+                "ClaudeSetElement, ClaudeClearElement, ClaudeLearnNamingConvention, " +
                 "RCSetTag, RCQuery, RCInspectTags, RCValidateTags, RCTagInspector, RCBuildFromDiagram");
 
             return LoadReturnCode.Success;

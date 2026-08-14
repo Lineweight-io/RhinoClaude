@@ -143,6 +143,70 @@ namespace RhinoClaude.Semantic
         }
 
         /// <summary>
+        /// The report as flat lines for the self-review prompt (semantic plan phase E). The
+        /// reviewer is judging whether the massing is right; proportions and hierarchy in
+        /// numbers are a far better basis for that than the screenshot alone.
+        ///
+        /// Returns null when there is nothing to say, so the reviewer prompt stays byte-stable
+        /// on documents with no masses.
+        /// </summary>
+        public static string Summarize(MassingCompositionReport report, UnitContext units)
+        {
+            if (report == null || report.Ranked.Count == 0) return null;
+            units = units ?? UnitContext.Feet();
+
+            var lines = new List<string>();
+
+            if (report.OverallBbox.IsValid)
+            {
+                var size = report.OverallBbox.Size;
+                lines.Add(string.Format(
+                    "Envelope: {0} × {1} × {2} ft, dominant axis {3}.",
+                    Feet(size.X, units), Feet(size.Y, units), Feet(size.Z, units), report.DominantAxis));
+            }
+
+            if (report.AspectRatios != null && report.AspectRatios.Length == 3)
+            {
+                lines.Add(string.Format(
+                    "Aspect ratios (long:mid, long:short, mid:short): {0} : {1} : {2}.",
+                    report.AspectRatios[0], report.AspectRatios[1], report.AspectRatios[2]));
+            }
+
+            lines.Add(string.Format("Symmetry: {0} about the east-west axis, {1} about north-south (1 = mirror-symmetric).",
+                report.SymmetryAboutX, report.SymmetryAboutY));
+
+            lines.Add("Mass hierarchy: " + string.Join("; ", report.Ranked.Take(5).Select(
+                r => (r.Name ?? r.MassId) + " " + r.Function + " " + r.PercentOfTotal + "%")) + ".");
+
+            if (report.RatioPrimaryToSecondary != null)
+            {
+                lines.Add("Primary-to-secondary volume ratio: " + report.RatioPrimaryToSecondary.Value + ".");
+            }
+
+            lines.Add(string.Format(
+                "Boolean composition: {0} union(s), {1} difference(s), {2} ft³ cut away against {3} ft³ of mass.",
+                report.UnionCount, report.DifferenceCount,
+                Feet3(report.CutVolumeTotal, units), Feet3(report.AdditiveVolumeTotal, units)));
+
+            if (report.FloorToFloorConsistency != null)
+            {
+                lines.Add(string.Format(
+                    "Vertical rhythm: {0} inferred level(s), floor-to-floor consistency {1} (1 = every mass lands on the ladder).",
+                    report.InferredLevelCount, report.FloorToFloorConsistency.Value));
+            }
+
+            foreach (var note in report.Notes) lines.Add(note);
+
+            return string.Join("\n", lines);
+        }
+
+        private static string Feet(double modelLength, UnitContext units) =>
+            Math.Round(units.ToFeet(modelLength)).ToString("#,0");
+
+        private static string Feet3(double modelVolume, UnitContext units) =>
+            Math.Round(units.VolumeToCubicFeet(modelVolume)).ToString("#,0");
+
+        /// <summary>
         /// How close each mass's height is to a whole number of storeys. 1 means every mass
         /// lands on the ladder; 0.5 means the average mass is half a storey out.
         /// </summary>
