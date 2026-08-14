@@ -73,13 +73,37 @@ namespace RhinoClaude.Agent
         /// </summary>
         public bool EnableRhinoCommandTool { get; set; } = false;
 
+        /// <summary>
+        /// Register the semantic layer's tools alongside the raw geometry ones. Off means the
+        /// agent sees exactly the phase 1 tool set — a clean A/B and a safety valve if the
+        /// classifier misbehaves on a particular file.
+        /// </summary>
+        public bool EnableSemanticTools { get; set; } = true;
+
+        /// <summary>
+        /// Firm-standard floor-to-floor, in model units, used when Levels are inferred rather
+        /// than drawn (semantic plan §5.6). 0 means "not configured" — get_level_info then
+        /// reports only the levels it can actually see.
+        /// </summary>
+        public double FloorToFloorDefault { get; set; }
+
+        /// <summary>
+        /// The firm-level learned layer convention as JSON, applied to every document this user
+        /// opens. The per-document map lives in the .3dm and takes precedence over this.
+        /// </summary>
+        public string FirmLayerConventionJson { get; set; }
+
         public string ScriptLogPath { get; set; }
         public string CaptureLogPath { get; set; }
+
+        /// <summary>Classifier timings, per semantic plan §6.2.</summary>
+        public string ClassifierLogPath { get; set; }
 
         public AgentSettings()
         {
             ScriptLogPath = System.IO.Path.Combine(JsonlLogger.DefaultDirectory, "script_log.jsonl");
             CaptureLogPath = System.IO.Path.Combine(JsonlLogger.DefaultDirectory, "capture_log.jsonl");
+            ClassifierLogPath = System.IO.Path.Combine(JsonlLogger.DefaultDirectory, "classifier_timing.jsonl");
         }
 
         public AgentSettings Clone() => new AgentSettings
@@ -98,8 +122,12 @@ namespace RhinoClaude.Agent
             EnableScriptTool = EnableScriptTool,
             ScriptTimeoutSeconds = ScriptTimeoutSeconds,
             EnableRhinoCommandTool = EnableRhinoCommandTool,
+            EnableSemanticTools = EnableSemanticTools,
+            FloorToFloorDefault = FloorToFloorDefault,
+            FirmLayerConventionJson = FirmLayerConventionJson,
             ScriptLogPath = ScriptLogPath,
-            CaptureLogPath = CaptureLogPath
+            CaptureLogPath = CaptureLogPath,
+            ClassifierLogPath = ClassifierLogPath
         };
     }
 }

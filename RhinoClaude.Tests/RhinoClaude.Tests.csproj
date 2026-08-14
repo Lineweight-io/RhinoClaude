@@ -43,4 +43,14 @@
     <Compile Include="..\RhinoClaude\Agent\JsonlLogger.cs" Link="Linked\JsonlLogger.cs" />
   </ItemGroup>
 
+  <!--
+    The semantic layer's core is deliberately Rhino-free for the same reason: vocabulary,
+    the layer-convention resolution rule, face/edge classification, selector resolution,
+    and every analytical read tool are pure functions over view models. Only the analyzers
+    that build those views from Breps need RhinoCommon, and they stay out of this list.
+  -->
+  <ItemGroup>
+    <Compile Include="..\RhinoClaude\Semantic\**\*.cs" LinkBase="Linked\Semantic" />
+  </ItemGroup>
+
 </Project>
