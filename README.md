@@ -64,7 +64,7 @@ and to believe a screenshot over a semantic result when the two disagree.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tools (63)
+### Tools (64)
 
 **Raw geometry (39)** — the phase 1 set, unchanged. The semantic tools sit on top of these;
 nothing was replaced.
@@ -96,8 +96,9 @@ mutation service: Rhino does not put selection or camera changes on the undo sta
 them in undo records would inflate the count that "Revert session" pops and undo real geometry
 edits instead.
 
-**Semantic (24)** — 17 read, 7 write. Switchable off in settings, which gives the agent exactly
-the phase 1 tool set.
+**Semantic (25)** — 17 read, 7 massing operations, plus `promote_opening_to_entry`. (The plan
+calls this "24"; its own breakdown of 17 + 7 + 1 is 25.) Switchable off in settings, which gives
+the agent exactly the phase 1 tool set.
 
 | Group | Tools |
 |---|---|
@@ -196,7 +197,7 @@ RhinoClaude.sln
 │   │   ├── Phase1Tools.cs           #   query, create, transform, capture, script, done
 │   │   ├── Tier1Tools.cs            #   the rest of the plan §3 inventory
 │   │   ├── SemanticReadTools.cs     #   the 17 semantic reads
-│   │   ├── SemanticWriteTools.cs    #   the 8 semantic writes
+│   │   ├── SemanticWriteTools.cs    #   the 7 massing operations + entry promotion
 │   │   └── ToolInput.cs             #   shared argument reading
 │   ├── UI/AgentChatPanel.cs         # the sidebar
 │   ├── UI/AgentSettingsDialog.cs
