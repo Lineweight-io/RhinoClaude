@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Multi-target: net48 for Rhino 7+8 on Windows, net7.0 for Rhino 8 -->
+    <TargetFrameworks>net48;net7.0</TargetFrameworks>
+    <RootNamespace>RhinoClaude</RootNamespace>
+    <AssemblyName>RhinoClaude</AssemblyName>
+    <Version>0.1.0</Version>
+    <Authors>Your Name</Authors>
+    <Description>Claude AI integration for Rhinoceros 3D</Description>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <OutputPath>bin\Build</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- Rhino 7 / Rhino 8 .NET Framework target -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net48'">
+    <DefineConstants>$(DefineConstants);RHINOFW</DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <!-- Rhino 8 .NET Core target -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net7.0'">
+    <DefineConstants>$(DefineConstants);RHINOCORE</DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <!--
+    RhinoCommon NuGet package - compile-only reference (Rhino provides the DLL at runtime).
+    Use the LOWEST Rhino version you want to support as the package version.
+    - For net48: Use a Rhino 7.x version for Rhino 7 compatibility
+    - For net7.0: Use a Rhino 8.x version for Rhino 8 .NET Core
+    
+    Find versions at: https://www.nuget.org/packages/RhinoCommon
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="RhinoCommon" Version="7.38.24338.17001" IncludeAssets="compile" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" IncludeAssets="compile" />
+    <PackageReference Include="System.Drawing.Common" Version="7.0.0" IncludeAssets="compile" />
+  </ItemGroup>
+
+  <!-- Copy DLL to .rhp so Rhino can load it as a plugin -->
+  <Target Name="CopyToRhp" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFiles="$(OutputPath)$(AssemblyName).rhp" />
+  </Target>
+
+  <!-- System.Text.Json for JSON serialization (needed for net48; already included in net7.0) -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,65 @@
+# ── Build output ──────────────────────────────────────────────
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.dll
+*.pdb
+*.exe
+
+# bin/ is ignored, EXCEPT the built plugin and its fixture block library —
+# those are carried in the repo so a fresh clone on another PC has a
+# working .rhp without needing the full toolchain.
+# NOTE: git cannot re-include a file whose parent directory is excluded,
+# so each level has to be walked down explicitly.
+bin/
+!RhinoClaude/bin/
+RhinoClaude/bin/*
+!RhinoClaude/bin/Build/
+RhinoClaude/bin/Build/*
+!RhinoClaude/bin/Build/RhinoClaude.rhp
+!RhinoClaude/bin/Build/Library/
+RhinoClaude/bin/Build/Library/*
+!RhinoClaude/bin/Build/Library/*.3dm
+
+# ── Visual Studio / Rider ─────────────────────────────────────
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.VC.db
+*.VC.VC.opendb
+_ReSharper*/
+*.DotSettings.user
+
+# ── NuGet ─────────────────────────────────────────────────────
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# ── Secrets ───────────────────────────────────────────────────
+API_Key.txt
+*.key
+.env
+.env.*
+
+# ── Rhino documents ───────────────────────────────────────────
+# Working/test models are large binaries; keep them out of history.
+# The fixture blocks under bin/Build/Library are un-ignored above.
+/*.3dm
+/*.3dmbak
+*.rhl
+
+# ── Misc ──────────────────────────────────────────────────────
+*.zip
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log
+TestResults/
