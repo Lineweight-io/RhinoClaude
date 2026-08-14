@@ -15,7 +15,7 @@ namespace RhinoClaude.Services.Agent
     ///
     /// UI-thread only; the dispatcher guarantees that.
     /// </summary>
-    public sealed class RhinoMutationService
+    public sealed partial class RhinoMutationService
     {
         private readonly RhinoQueryService _query;
         private readonly SessionSnapshotService _snapshots;

@@ -44,6 +44,7 @@ namespace RhinoClaude.Agent
             Query = new RhinoQueryService(doc);
             Snapshots = new SessionSnapshotService(doc);
             Mutation = new RhinoMutationService(Query, Snapshots);
+            Interaction = new RhinoInteractionService(Query);
 
             ScriptLog = new JsonlLogger(Settings.ScriptLogPath);
             CaptureLog = new JsonlLogger(Settings.CaptureLogPath);
@@ -61,6 +62,7 @@ namespace RhinoClaude.Agent
 
         public RhinoQueryService Query { get; }
         public RhinoMutationService Mutation { get; }
+        public RhinoInteractionService Interaction { get; }
         public SessionSnapshotService Snapshots { get; }
         public JsonlLogger ScriptLog { get; }
         public JsonlLogger CaptureLog { get; }
@@ -87,8 +89,7 @@ namespace RhinoClaude.Agent
                 DefaultTimeoutSeconds = Settings.ScriptTimeoutSeconds
             };
 
-            Registry = new ToolRegistry();
-            Registry.RegisterAll(Phase1Tools.Build(Query, Mutation, Capture, Script, Settings));
+            Registry = BuildRegistry();
 
             bool scriptEnabled = Settings.EnableScriptTool;
             Session = new AgentSession(
@@ -110,8 +111,7 @@ namespace RhinoClaude.Agent
             var current = Session;
             bool scriptEnabled = Settings.EnableScriptTool;
 
-            Registry = new ToolRegistry();
-            Registry.RegisterAll(Phase1Tools.Build(Query, Mutation, Capture, Script, Settings));
+            Registry = BuildRegistry();
 
             // The registry the running session captured is immutable for its lifetime, so a
             // tool-set change takes effect on the next session. Model and budget changes are
@@ -123,6 +123,18 @@ namespace RhinoClaude.Agent
                 current.Settings.MaxIterations = Settings.MaxIterations;
                 current.Settings.MaxTokens = Settings.MaxTokens;
             }
+        }
+
+        /// <summary>
+        /// The full Tier 1 registry. Registration order is stable and matters: the tools array
+        /// renders first in the prompt, so shuffling it would break prompt caching every turn.
+        /// </summary>
+        private ToolRegistry BuildRegistry()
+        {
+            var registry = new ToolRegistry();
+            registry.RegisterAll(Phase1Tools.Build(Query, Mutation, Capture, Script, Settings));
+            registry.RegisterAll(Tier1Tools.Build(Query, Mutation, Interaction));
+            return registry;
         }
 
         /// <summary>True when the tool set changed and only a new session will pick it up.</summary>

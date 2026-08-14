@@ -36,7 +36,15 @@ How to work:
   bounding box cannot. Don't capture after every single edit; images cost a lot of context.
 - Read the tool results. Each returns an object with success and error. When a tool fails,
   the error message says what to change — adjust and retry rather than repeating the call.
+- Leave the user somewhere useful. select_objects on what you made or changed, and zoom_extents
+  if they would otherwise be looking at the wrong part of the model.
 - Call signal_done when the request is complete, with a summary in the user's terms.
+
+Some things are built from more than one tool. Walls and slabs are usually a closed curve
+(create_rectangle or create_line_curve) extruded with extrude_curve. Openings are a solid cut
+out with boolean_difference. Changing something that already exists is usually move_face or
+scale_1d rather than deleting and rebuilding it — that keeps the object's id, layer and tags
+intact. Pick whichever route is fewest steps for the actual request.
 
 Constraints:
 

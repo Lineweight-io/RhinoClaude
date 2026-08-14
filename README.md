@@ -5,9 +5,9 @@ sidebar; Claude inspects the model, creates and edits geometry through a curated
 looks at what it built, and reports back — all inside a single undo group you can revert with
 one click.
 
-> **Status:** phase 1 of the agent refactor (see `AGENT_REFACTOR_PLAN.md`). The streaming
-> tool-use loop, the sidebar, a starter Tier 1 tool set, multi-shot view capture and the
-> Roslyn C# escape hatch are in. Self-review and the remaining Tier 1 tools come in later phases.
+> **Status:** the streaming tool-use loop, the sidebar, the full 38-tool Tier 1 set, multi-shot
+> view capture and the Roslyn C# escape hatch are in. Self-review, `ClaudeAddReviewView` and
+> `run_rhino_command` come next. See `AGENT_REFACTOR_PLAN.md`.
 
 ## Features
 
@@ -29,17 +29,28 @@ one click.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tools registered in phase 1
+### Tier 1 tools (38)
 
 | Group | Tools |
 |---|---|
-| Query | `describe_document`, `list_layers`, `list_objects`, `get_object`, `get_selection` |
+| Query | `describe_document`, `list_layers`, `list_objects`, `get_object`, `get_selection`, `list_named_views`, `list_blocks` |
+| Create | `create_point`, `create_line_curve`, `create_arc_curve`, `create_circle`, `create_rectangle`, `create_box` |
+| Transform | `translate_objects`, `rotate_objects`, `scale_objects`, `scale_1d`, `mirror_objects` |
+| Boolean / modify | `boolean_union`, `boolean_difference`, `boolean_intersection`, `offset_curve`, `extrude_curve`, `move_face`, `move_edge`, `delete_objects` |
 | Layer | `ensure_layer`, `assign_objects_to_layer` |
-| Create | `create_box`, `create_line_curve` |
-| Modify | `translate_objects`, `delete_objects` |
-| View | `capture_views` |
+| Block | `insert_block`, `import_3dm_as_block` |
+| Material | `assign_material` |
+| Selection / view | `select_objects`, `deselect_all`, `zoom_extents`, `capture_views` |
 | Tier 2 | `run_rhinocommon_script` |
-| Meta | `signal_done` |
+| Meta | `set_object_tags`, `signal_done` |
+
+`delete_objects` is an addition to the plan's inventory — without it an agent that mis-creates
+geometry cannot clean up after itself.
+
+Selection and viewport tools live in `RhinoInteractionService`, deliberately apart from the
+mutation service: Rhino does not put selection or camera changes on the undo stack, so wrapping
+them in undo records would inflate the count that "Revert session" pops and undo real geometry
+edits instead.
 
 ## Requirements
 
@@ -71,8 +82,11 @@ RhinoClaude.sln
 │   │   ├── RhinoMutationService.cs  #   writes, each in its own undo record
 │   │   ├── ViewCaptureService.cs    #   3D camera controller + multi-shot capture
 │   │   ├── ScriptExecutorService.cs #   Roslyn C# escape hatch
-│   │   └── SessionSnapshotService.cs#   session undo log + revert
-│   ├── Tools/Phase1Tools.cs         # schemas + handler wiring
+│   │   ├── SessionSnapshotService.cs#   session undo log + revert
+│   │   └── RhinoInteractionService.cs # selection + viewport (no undo record)
+│   ├── Tools/                       # tool schemas + handler wiring
+│   │   ├── Phase1Tools.cs           #   query, create, transform, capture, script, done
+│   │   └── Tier1Tools.cs            #   the rest of the plan §3 inventory
 │   ├── UI/AgentChatPanel.cs         # the sidebar
 │   ├── UI/AgentSettingsDialog.cs
 │   ├── UI/TagInspectorPanel.cs      # unchanged
@@ -229,12 +243,16 @@ loop replays the whole conversation on each pass.
 - **Revert did less than expected** — revert issues one undo step per mutation. If you undid
   something by hand mid-session, the counts drift.
 
-## Not in this phase
+## Not built yet
 
-Self-review (`SelfReviewService`, `ClaudeAddReviewView`), the remaining Tier 1 tools
-(booleans, `move_face`/`move_edge`, `scale_1d`, blocks, materials, arcs and circles),
-`run_rhino_command`, and per-document conversation persistence. See `AGENT_REFACTOR_PLAN.md`
-§9 for the phase order.
+Self-review (`SelfReviewService` + `ClaudeAddReviewView`, plan §5), `run_rhino_command`
+(Tier 3, §4.7), and per-document conversation persistence (`AgentConversationStore`, §2.2).
+See `AGENT_REFACTOR_PLAN.md` §9 for the phase order.
+
+**Nothing in the Rhino-facing layer has been exercised inside Rhino yet** — it compiles against
+RhinoCommon, and the protocol layer is unit-tested, but RhinoCommon is a compile-only reference
+so no test here touches a real document. Geometry results, camera control and undo behaviour all
+need a session in Rhino before they should be trusted.
 
 ## License
 

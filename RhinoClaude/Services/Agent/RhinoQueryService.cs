@@ -327,6 +327,51 @@ namespace RhinoClaude.Services.Agent
             };
         }
 
+        // ── list_named_views ──────────────────────────────────────────
+
+        public object ListNamedViews()
+        {
+            var doc = Doc;
+            var views = new List<object>();
+
+            for (int i = 0; i < doc.NamedViews.Count; i++)
+            {
+                var info = doc.NamedViews[i];
+                var viewport = info.Viewport;
+                views.Add(new Dictionary<string, object>
+                {
+                    { "name", ToolJson.Safe(info.Name) },
+                    { "cameraLocation", Pt(viewport.CameraLocation) },
+                    { "cameraTarget", Pt(viewport.TargetPoint) },
+                    { "isParallel", viewport.IsParallelProjection }
+                });
+            }
+
+            return new Dictionary<string, object> { { "views", views } };
+        }
+
+        // ── list_blocks ───────────────────────────────────────────────
+
+        public object ListBlocks()
+        {
+            var doc = Doc;
+            var blocks = new List<object>();
+
+            foreach (var definition in doc.InstanceDefinitions)
+            {
+                if (definition == null || definition.IsDeleted) continue;
+                blocks.Add(new Dictionary<string, object>
+                {
+                    { "name", ToolJson.Safe(definition.Name) },
+                    { "id", definition.Id.ToString() },
+                    { "instanceCount", definition.GetReferences(0)?.Length ?? 0 },
+                    { "objectCount", definition.GetObjectIds()?.Length ?? 0 }
+                });
+            }
+
+            return new Dictionary<string, object> { { "blocks", blocks } };
+        }
+
         /// <summary>Union bbox of a set of ids — used to frame view captures on the work area.</summary>
         public BoundingBox BoundingBoxOf(IEnumerable<Guid> ids)
         {
