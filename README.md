@@ -6,8 +6,8 @@ looks at what it built, and reports back — all inside a single undo group you 
 one click.
 
 > **Status:** the streaming tool-use loop, the sidebar, the full 38-tool Tier 1 set, multi-shot
-> view capture and the Roslyn C# escape hatch are in. Self-review, `ClaudeAddReviewView` and
-> `run_rhino_command` come next. See `AGENT_REFACTOR_PLAN.md`.
+> view capture, the Roslyn C# escape hatch and self-review are all in. `run_rhino_command` and
+> conversation persistence come next. See `AGENT_REFACTOR_PLAN.md`.
 
 ## Features
 
@@ -76,6 +76,8 @@ RhinoClaude.sln
 │   │   ├── SystemPrompt.cs
 │   │   ├── AgentSettings.cs
 │   │   ├── JsonlLogger.cs
+│   │   ├── ReviewModels.cs          #   review prompt + verdict parsing
+│   │   ├── SessionMutationLog.cs    #   what the agent actually changed
 │   │   └── AgentHost.cs             #   per-document object graph
 │   ├── Services/Agent/              # everything that touches RhinoCommon
 │   │   ├── RhinoQueryService.cs     #   read-only document access
@@ -83,7 +85,8 @@ RhinoClaude.sln
 │   │   ├── ViewCaptureService.cs    #   3D camera controller + multi-shot capture
 │   │   ├── ScriptExecutorService.cs #   Roslyn C# escape hatch
 │   │   ├── SessionSnapshotService.cs#   session undo log + revert
-│   │   └── RhinoInteractionService.cs # selection + viewport (no undo record)
+│   │   ├── RhinoInteractionService.cs # selection + viewport (no undo record)
+│   │   └── SelfReviewService.cs     #   deterministic checks + reviewer call
 │   ├── Tools/                       # tool schemas + handler wiring
 │   │   ├── Phase1Tools.cs           #   query, create, transform, capture, script, done
 │   │   └── Tier1Tools.cs            #   the rest of the plan §3 inventory
@@ -91,8 +94,8 @@ RhinoClaude.sln
 │   ├── UI/AgentSettingsDialog.cs
 │   ├── UI/TagInspectorPanel.cs      # unchanged
 │   ├── Commands/                    # ClaudeChat, ClaudeSetKey, ClaudeTag,
-│   │                                # ClaudeRevertSession, RC* tag commands,
-│   │                                # RCBuildFromDiagram
+│   │                                # ClaudeRevertSession, ClaudeAddReviewView,
+│   │                                # RC* tag commands, RCBuildFromDiagram
 │   ├── Schema/                      # TagSchema, BuildingStandards
 │   └── Services/                    # TagService, SceneContextCollector
 └── RhinoClaude.Tests/               # xunit; links the RhinoCommon-free sources
@@ -177,6 +180,7 @@ After a turn:
 | `ClaudeSetKey` | Store the API key |
 | `ClaudeTag` | Describe a selection in prose → structured `RC:` tags (still one-shot) |
 | `ClaudeRevertSession` | Same as the sidebar's revert button |
+| `ClaudeAddReviewView` | Stamp the current camera as `Claude:Review` for self-review to judge from |
 | `RCSetTag`, `RCQuery`, `RCInspectTags`, `RCValidateTags`, `RCTagInspector` | Deterministic tag operations |
 | `RCBuildFromDiagram` | The algorithmic ADA restroom builder (no AI) |
 
@@ -201,6 +205,9 @@ Behind the gear in the sidebar header:
 | Loop model | `claude-sonnet-5` |
 | Effort | `high` |
 | Show summarized reasoning | on |
+| Self-review | on |
+| Reviewer model | `claude-opus-5` |
+| Max review cycles per turn | 2 |
 | Cost budget per turn | $0.50 |
 | Max iterations per turn | 25 |
 | Max tokens per response | 32000 |
@@ -243,11 +250,35 @@ loop replays the whole conversation on each pass.
 - **Revert did less than expected** — revert issues one undo step per mutation. If you undid
   something by hand mid-session, the counts drift.
 
+## Self-review
+
+When the agent calls `signal_done`, the turn does not end straight away:
+
+1. Deterministic checks run against the document — do the created objects still exist, is any
+   geometry degenerate or invalid, are the bounding boxes a plausible size, did anything get
+   stranded on the default layer, was a layer created and left empty, and (only when the
+   request was about tagging) does everything have an `RC:ElementType`.
+2. The affected region is photographed from several angles — `Claude:Review` first if you
+   stamped one with `ClaudeAddReviewView`, then iso and plan framed on the session's geometry.
+3. Both go to a **separate, tool-less call on Opus 5**, constrained by JSON schema to
+   `ship` / `iterate` / `ask_user`.
+
+The verdict *is* `signal_done`'s return value, so an `iterate` lands in the agent's context as
+a tool result it can act on, and the loop carries on. `ask_user` ends the turn and puts the
+question in the sidebar with an answer box — answering is just the next turn, so context is kept.
+
+Guardrails: at most 2 iterate cycles per turn (a third becomes `ask_user`), and a defensive
+review every 10 iterations for a loop that never signals done. The reviewer's cost is billed
+against the same per-turn budget but priced on its own model.
+
+**Review never blocks work.** Every failure path — reviewer errored, timed out, returned
+nonsense — reports `unavailable` and the turn ends normally. The geometry is already in the
+document; a broken second opinion must not strand it.
+
 ## Not built yet
 
-Self-review (`SelfReviewService` + `ClaudeAddReviewView`, plan §5), `run_rhino_command`
-(Tier 3, §4.7), and per-document conversation persistence (`AgentConversationStore`, §2.2).
-See `AGENT_REFACTOR_PLAN.md` §9 for the phase order.
+`run_rhino_command` (Tier 3, plan §4.7) and per-document conversation persistence
+(`AgentConversationStore`, §2.2). See `AGENT_REFACTOR_PLAN.md` §9 for the phase order.
 
 **Nothing in the Rhino-facing layer has been exercised inside Rhino yet** — it compiles against
 RhinoCommon, and the protocol layer is unit-tested, but RhinoCommon is a compile-only reference
