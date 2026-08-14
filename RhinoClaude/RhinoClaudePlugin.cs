@@ -77,7 +77,7 @@ namespace RhinoClaude
 
             RhinoApp.WriteLine(
                 "RhinoClaude: run 'ClaudeChat' to open the agent panel. " +
-                "Other commands — ClaudeSetKey, ClaudeTag, ClaudeRevertSession, " +
+                "Other commands — ClaudeSetKey, ClaudeTag, ClaudeRevertSession, ClaudeAddReviewView, " +
                 "RCSetTag, RCQuery, RCInspectTags, RCValidateTags, RCTagInspector, RCBuildFromDiagram");
 
             return LoadReturnCode.Success;

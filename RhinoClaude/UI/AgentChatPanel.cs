@@ -412,6 +412,9 @@ namespace RhinoClaude.UI
             host.Settings.ShowThinking = updated.ShowThinking;
             host.Settings.EnableScriptTool = updated.EnableScriptTool;
             host.Settings.ScriptTimeoutSeconds = updated.ScriptTimeoutSeconds;
+            host.Settings.ReviewerModel = updated.ReviewerModel;
+            host.Settings.EnableSelfReview = updated.EnableSelfReview;
+            host.Settings.MaxReviewCycles = updated.MaxReviewCycles;
             host.ApplySettings();
 
             string effortNote = ModelCapabilities.SupportsEffort(host.Settings.LoopModel)
@@ -504,6 +507,9 @@ namespace RhinoClaude.UI
 
         public void OnBudgetChanged(CostBudget budget) =>
             Application.Instance.AsyncInvoke(() => UpdateCost(budget));
+
+        public void OnReviewCompleted(ReviewOutcome outcome, int cycle) =>
+            Application.Instance.AsyncInvoke(() => AppendReview(outcome, cycle));
 
         public void OnTurnFinished(AgentState finalState, string message) =>
             Application.Instance.AsyncInvoke(() =>
@@ -609,6 +615,88 @@ namespace RhinoClaude.UI
             _messages.Items.Add(new StackLayoutItem(Bubble("You",
                 new Label { Text = text, Wrap = WrapMode.Word },
                 Color.FromArgb(150, 150, 150, 40))));
+            ScrollToBottom();
+        }
+
+        /// <summary>
+        /// The reviewer's verdict, colour-coded. An ask_user verdict gets an answer box right
+        /// underneath — answering it is just the next user turn, so the agent keeps its context.
+        /// </summary>
+        private void AppendReview(ReviewOutcome outcome, int cycle)
+        {
+            FlushStreamedText();
+
+            Color accent;
+            string headline;
+
+            switch (outcome.Verdict)
+            {
+                case ReviewVerdict.Ship:
+                    accent = Color.FromArgb(60, 160, 110); headline = "Reviewer: SHIP"; break;
+                case ReviewVerdict.Iterate:
+                    accent = Color.FromArgb(200, 140, 40); headline = "Reviewer: ITERATE"; break;
+                case ReviewVerdict.AskUser:
+                    accent = Color.FromArgb(60, 140, 220); headline = "Reviewer: NEEDS YOUR CALL"; break;
+                default:
+                    accent = Color.FromArgb(130, 130, 130); headline = "Review unavailable"; break;
+            }
+
+            if (cycle > 1) headline += "  (cycle " + cycle + ")";
+
+            var layout = new DynamicLayout { DefaultSpacing = new Size(4, 3), Padding = new Padding(6, 4) };
+            layout.Add(new Label
+            {
+                Text = headline,
+                Font = SystemFonts.Bold(SystemFonts.Default().Size - 1),
+                TextColor = accent
+            });
+
+            if (!string.IsNullOrWhiteSpace(outcome.Notes))
+                layout.Add(new Label { Text = outcome.Notes, Wrap = WrapMode.Word });
+
+            if (outcome.Verdict == ReviewVerdict.AskUser && !string.IsNullOrWhiteSpace(outcome.QuestionForUser))
+            {
+                layout.Add(new Label
+                {
+                    Text = outcome.QuestionForUser,
+                    Wrap = WrapMode.Word,
+                    Font = SystemFonts.Bold()
+                });
+
+                var answer = new TextBox();
+                var send = new Button { Text = "Answer" };
+
+                EventHandler<EventArgs> submit = (s, e) =>
+                {
+                    string text = answer.Text?.Trim();
+                    if (string.IsNullOrEmpty(text)) return;
+                    answer.Enabled = false;
+                    send.Enabled = false;
+                    _input.Text = text;
+                    SendTurn();
+                };
+
+                send.Click += submit;
+                answer.KeyDown += (s, e) =>
+                {
+                    if (e.Key == Keys.Enter) { e.Handled = true; submit(s, EventArgs.Empty); }
+                };
+
+                layout.Add(new StackLayout
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Items = { new StackLayoutItem(answer, true), new StackLayoutItem(send, false) }
+                });
+            }
+
+            _messages.Items.Add(new StackLayoutItem(new Eto.Forms.Panel
+            {
+                Content = layout,
+                BackgroundColor = Color.FromArgb(accent.Rb, accent.Gb, accent.Bb, 35)
+            }));
+
             ScrollToBottom();
         }
 

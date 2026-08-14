@@ -396,12 +396,27 @@ namespace RhinoClaude.Agent
         public string Display { get; set; }
     }
 
-    /// <summary>Carries <c>effort</c>, which is nested here rather than top-level.</summary>
+    /// <summary>Structured output — constrains the response to a JSON schema.</summary>
+    public sealed class OutputFormat
+    {
+        [JsonPropertyName("type")]
+        public string Type { get; set; } = "json_schema";
+
+        [JsonPropertyName("schema")]
+        [JsonConverter(typeof(RawJsonConverter))]
+        public string SchemaJson { get; set; } = "{\"type\":\"object\"}";
+    }
+
+    /// <summary>Carries <c>effort</c> and <c>format</c>, both nested here rather than top-level.</summary>
     public sealed class OutputConfig
     {
         [JsonPropertyName("effort")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string Effort { get; set; }
+
+        [JsonPropertyName("format")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public OutputFormat Format { get; set; }
     }
 
     public sealed class MessagesRequest

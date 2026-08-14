@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,6 +12,8 @@ namespace RhinoClaude.Agent
         Idle,
         Streaming,
         DispatchingTools,
+        Reviewing,
+        WaitingForUser,
         Done,
         Cancelled,
         BudgetExceeded,
@@ -33,6 +36,8 @@ namespace RhinoClaude.Agent
         void OnToolInvocationStarted(string toolUseId, string toolName);
         void OnToolInvocationFinished(ToolInvocation invocation);
         void OnBudgetChanged(CostBudget budget);
+        /// <summary>Self-review finished. <paramref name="cycle"/> is 1-based.</summary>
+        void OnReviewCompleted(ReviewOutcome outcome, int cycle);
         void OnTurnFinished(AgentState finalState, string message);
     }
 
@@ -73,8 +78,24 @@ namespace RhinoClaude.Agent
         public AgentSettings Settings { get; }
         public IAgentSessionObserver Observer { get; set; }
 
+        /// <summary>
+        /// Runs self-review for a signal_done call. Null disables review entirely, in which
+        /// case signal_done simply ends the turn. Arguments are the agent's own summary and
+        /// expected outcome.
+        /// </summary>
+        public Func<string, string, CancellationToken, Task<ReviewOutcome>> ReviewHook { get; set; }
+
+        /// <summary>Set when review returned ask_user; the panel surfaces this inline.</summary>
+        public string PendingQuestion { get; private set; }
+
+        /// <summary>Review cycles used in the current turn (plan §5.5 caps this).</summary>
+        public int ReviewCycles { get; private set; }
+
         /// <summary>First user turn, truncated — the session dropdown's label.</summary>
         public string DisplayName { get; private set; } = "New session";
+
+        /// <summary>The most recent user turn, verbatim. The reviewer judges against this.</summary>
+        public string LastUserMessage { get; private set; }
 
         /// <summary>Full conversation, replayed on every request (the API is stateless).</summary>
         public List<AgentMessage> Messages { get; } = new List<AgentMessage>();
@@ -123,6 +144,8 @@ namespace RhinoClaude.Agent
             if (Messages.Count == 0)
                 DisplayName = Truncate(userMessage.Trim(), 40);
 
+            LastUserMessage = userMessage;
+
             using (_cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken))
             {
                 var token = _cts.Token;
@@ -132,6 +155,10 @@ namespace RhinoClaude.Agent
 
                 CurrentBudget = new CostBudget(Settings.LoopModel, Settings.MaxCostUsd, Settings.MaxIterations);
                 Observer?.OnBudgetChanged(CurrentBudget);
+
+                ReviewCycles = 0;
+                PendingQuestion = null;
+                _iterationAtLastReview = 0;
 
                 string finalMessage = null;
 
@@ -194,6 +221,7 @@ namespace RhinoClaude.Agent
 
                         var resultBlocks = new List<ContentBlock>();
                         bool turnTerminated = false;
+                        string terminationMessage = null;
 
                         foreach (var toolUse in toolUses)
                         {
@@ -201,13 +229,25 @@ namespace RhinoClaude.Agent
 
                             var invocation = await _dispatcher.InvokeAsync(toolUse, token).ConfigureAwait(false);
 
+                            // signal_done is where self-review runs. The reviewer's verdict
+                            // becomes the tool's return value, so the agent reads it exactly
+                            // like any other result and can act on an "iterate".
+                            if (invocation.TerminatesTurn && invocation.Result.Success && ReviewHook != null)
+                            {
+                                var decision = await RunReviewAsync(toolUse, invocation, token).ConfigureAwait(false);
+                                turnTerminated = decision.EndTurn;
+                                if (decision.EndTurn) terminationMessage = decision.Message;
+                            }
+                            else if (invocation.TerminatesTurn && invocation.Result.Success)
+                            {
+                                turnTerminated = true;
+                                terminationMessage = "Agent signalled the task is complete.";
+                            }
+
                             Invocations.Add(invocation);
                             Observer?.OnToolInvocationFinished(invocation);
 
                             resultBlocks.Add(invocation.Result.ToBlock(toolUse.Id));
-
-                            if (invocation.TerminatesTurn && invocation.Result.Success)
-                                turnTerminated = true;
 
                             // Cancellation between tools: finish the ones already dispatched,
                             // fire nothing new. Every tool_use still needs a matching result
@@ -224,6 +264,25 @@ namespace RhinoClaude.Agent
                             }
                         }
 
+                        // Plan §5.1 trigger 2 — a loop that keeps working without ever calling
+                        // signal_done gets reviewed anyway, so churn is caught rather than
+                        // silently burning the budget.
+                        if (!turnTerminated && ReviewHook != null &&
+                            Settings.DefensiveReviewAfterIterations > 0 &&
+                            CurrentBudget.Iterations - _iterationAtLastReview >= Settings.DefensiveReviewAfterIterations)
+                        {
+                            _iterationAtLastReview = CurrentBudget.Iterations;
+
+                            var defensive = await RunDefensiveReviewAsync(token).ConfigureAwait(false);
+                            if (defensive != null)
+                            {
+                                // Delivered as an extra user-turn note rather than a tool result:
+                                // there is no tool_use to answer, and every tool_use already has
+                                // exactly one matching result.
+                                resultBlocks.Add(new TextBlock(defensive));
+                            }
+                        }
+
                         Messages.Add(new AgentMessage("user", resultBlocks.ToArray()));
 
                         if (token.IsCancellationRequested)
@@ -235,8 +294,8 @@ namespace RhinoClaude.Agent
 
                         if (turnTerminated)
                         {
-                            SetState(AgentState.Done, null);
-                            finalMessage = "Agent signalled the task is complete.";
+                            SetState(PendingQuestion == null ? AgentState.Done : AgentState.WaitingForUser, null);
+                            finalMessage = terminationMessage;
                             break;
                         }
                     }
@@ -262,6 +321,138 @@ namespace RhinoClaude.Agent
                 }
 
                 return State;
+            }
+        }
+
+        private int _iterationAtLastReview;
+
+        private struct ReviewDecision
+        {
+            public bool EndTurn;
+            public string Message;
+        }
+
+        /// <summary>
+        /// A review the agent did not ask for. It never ends the turn — the agent is still
+        /// working — it just puts the reviewer's observations in front of it.
+        /// Returns the note to append, or null when there is nothing worth saying.
+        /// </summary>
+        private async Task<string> RunDefensiveReviewAsync(CancellationToken token)
+        {
+            var previousState = State;
+            SetState(AgentState.Reviewing, null);
+
+            try
+            {
+                var outcome = await ReviewHook(
+                    "(no summary — this is an automatic check partway through the turn)",
+                    null, token).ConfigureAwait(false);
+
+                if (outcome.Usage != null && !string.IsNullOrEmpty(outcome.ModelId))
+                {
+                    CurrentBudget.RecordSideCall("review (auto)", outcome.ModelId, outcome.Usage);
+                    Observer?.OnBudgetChanged(CurrentBudget);
+                }
+
+                Observer?.OnReviewCompleted(outcome, 0);
+
+                if (outcome.Verdict == ReviewVerdict.Ship || outcome.Verdict == ReviewVerdict.Unavailable)
+                    return null;
+
+                return "[automatic review after " + CurrentBudget.Iterations + " iterations] " +
+                       (outcome.Notes ?? "The reviewer flagged something.") +
+                       " Take this into account, or say why it does not apply, and carry on.";
+            }
+            catch (Exception)
+            {
+                return null;   // never let a defensive check break a working turn
+            }
+            finally
+            {
+                SetState(previousState, null);
+            }
+        }
+
+        /// <summary>
+        /// Plan §5.5's decision tree. Mutates <paramref name="invocation"/>'s result so the
+        /// verdict is what the agent sees come back from signal_done.
+        /// </summary>
+        private async Task<ReviewDecision> RunReviewAsync(
+            ToolUseBlock toolUse, ToolInvocation invocation, CancellationToken token)
+        {
+            SetState(AgentState.Reviewing, null);
+
+            string summary = null;
+            string expected = null;
+            try
+            {
+                var input = toolUse.ParseInput();
+                if (input.TryGetProperty("summary", out var s) && s.ValueKind == JsonValueKind.String)
+                    summary = s.GetString();
+                if (input.TryGetProperty("expectedOutcome", out var e) && e.ValueKind == JsonValueKind.String)
+                    expected = e.GetString();
+            }
+            catch (Exception) { /* the reviewer copes with a missing summary */ }
+
+            ReviewCycles++;
+            var outcome = await ReviewHook(summary, expected, token).ConfigureAwait(false);
+
+            // The reviewer runs on a different model, so it is priced separately but still
+            // counts against this turn's ceiling.
+            if (outcome.Usage != null && !string.IsNullOrEmpty(outcome.ModelId))
+            {
+                CurrentBudget.RecordSideCall("review", outcome.ModelId, outcome.Usage);
+                Observer?.OnBudgetChanged(CurrentBudget);
+            }
+
+            Observer?.OnReviewCompleted(outcome, ReviewCycles);
+
+            // Past the cycle cap, an iterate becomes a question for the user — otherwise a
+            // reviewer that is never satisfied would spend the whole budget.
+            if (outcome.Verdict == ReviewVerdict.Iterate && ReviewCycles >= Settings.MaxReviewCycles)
+            {
+                outcome.Verdict = ReviewVerdict.AskUser;
+                outcome.QuestionForUser = string.IsNullOrWhiteSpace(outcome.QuestionForUser)
+                    ? "I have revised this " + ReviewCycles + " times and the review still flags: " +
+                      (outcome.Notes ?? "an unresolved issue") + ". How would you like me to proceed?"
+                    : outcome.QuestionForUser;
+                outcome.Notes = (outcome.Notes ?? string.Empty) +
+                    " (Review cycle cap of " + Settings.MaxReviewCycles + " reached, so this became a question.)";
+            }
+
+            invocation.Result = ToolResult.Ok(outcome.ToToolPayload());
+
+            switch (outcome.Verdict)
+            {
+                case ReviewVerdict.Iterate:
+                    // Do not end the turn: the notes are now signal_done's return value, and
+                    // the agent gets another pass to act on them.
+                    return new ReviewDecision { EndTurn = false };
+
+                case ReviewVerdict.AskUser:
+                    PendingQuestion = string.IsNullOrWhiteSpace(outcome.QuestionForUser)
+                        ? outcome.Notes
+                        : outcome.QuestionForUser;
+                    return new ReviewDecision
+                    {
+                        EndTurn = true,
+                        Message = "Review needs a decision from you: " + PendingQuestion
+                    };
+
+                case ReviewVerdict.Ship:
+                    return new ReviewDecision
+                    {
+                        EndTurn = true,
+                        Message = "Reviewer: SHIP — " + (outcome.Notes ?? "the work matches the request.")
+                    };
+
+                default:
+                    return new ReviewDecision
+                    {
+                        EndTurn = true,
+                        Message = "Review was unavailable (" + (outcome.Notes ?? "no detail") +
+                                  "). The work is in the document; check it yourself."
+                    };
             }
         }
 

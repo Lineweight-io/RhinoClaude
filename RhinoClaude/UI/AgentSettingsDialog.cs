@@ -21,6 +21,9 @@ namespace RhinoClaude.UI
         private readonly TextBox _maxTokens = new TextBox { Width = 80 };
         private readonly CheckBox _enableScript = new CheckBox { Text = "Enable run_rhinocommon_script (Tier 2 escape hatch)" };
         private readonly TextBox _scriptTimeout = new TextBox { Width = 80 };
+        private readonly CheckBox _enableReview = new CheckBox { Text = "Self-review when the agent signals done" };
+        private readonly DropDown _reviewerModel = new DropDown { Width = 190 };
+        private readonly TextBox _maxReviewCycles = new TextBox { Width = 80 };
 
         public AgentSettingsDialog(AgentSettings settings)
         {
@@ -56,6 +59,19 @@ namespace RhinoClaude.UI
             _enableScript.Checked = _settings.EnableScriptTool;
             _scriptTimeout.Text = _settings.ScriptTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
 
+            _reviewerModel.Items.Add(new ListItem { Text = "Claude Opus 5 (default)", Key = AgentSettings.DefaultReviewerModel });
+            _reviewerModel.Items.Add(new ListItem { Text = "Claude Opus 4.8", Key = "claude-opus-4-8" });
+            _reviewerModel.Items.Add(new ListItem { Text = "Claude Sonnet 5", Key = "claude-sonnet-5" });
+            _reviewerModel.SelectedKey = _settings.ReviewerModel;
+            if (_reviewerModel.SelectedIndex < 0)
+            {
+                _reviewerModel.Items.Add(new ListItem { Text = _settings.ReviewerModel, Key = _settings.ReviewerModel });
+                _reviewerModel.SelectedKey = _settings.ReviewerModel;
+            }
+
+            _enableReview.Checked = _settings.EnableSelfReview;
+            _maxReviewCycles.Text = _settings.MaxReviewCycles.ToString(CultureInfo.InvariantCulture);
+
             var layout = new DynamicLayout { DefaultSpacing = new Size(8, 8) };
 
             layout.AddRow(new Label { Text = "Loop model", VerticalAlignment = VerticalAlignment.Center }, _model);
@@ -66,6 +82,11 @@ namespace RhinoClaude.UI
             layout.AddRow(new Label { Text = "Max tokens per response", VerticalAlignment = VerticalAlignment.Center }, _maxTokens);
             layout.AddRow(_enableScript, null);
             layout.AddRow(new Label { Text = "Script timeout (seconds)", VerticalAlignment = VerticalAlignment.Center }, _scriptTimeout);
+
+            layout.AddRow(Divider(), null);
+            layout.AddRow(_enableReview, null);
+            layout.AddRow(new Label { Text = "Reviewer model", VerticalAlignment = VerticalAlignment.Center }, _reviewerModel);
+            layout.AddRow(new Label { Text = "Max review cycles per turn", VerticalAlignment = VerticalAlignment.Center }, _maxReviewCycles);
 
             layout.AddRow(Divider(), null);
             layout.AddRow(new Label
@@ -162,7 +183,16 @@ namespace RhinoClaude.UI
                 return;
             }
 
+            if (!int.TryParse(_maxReviewCycles.Text, out int reviewCycles) || reviewCycles < 1 || reviewCycles > 5)
+            {
+                MessageBox.Show(this, "Max review cycles must be between 1 and 5.", "Invalid value");
+                return;
+            }
+
             _settings.LoopModel = _model.SelectedKey;
+            _settings.ReviewerModel = _reviewerModel.SelectedKey;
+            _settings.EnableSelfReview = _enableReview.Checked == true;
+            _settings.MaxReviewCycles = reviewCycles;
             _settings.Effort = _effort.SelectedKey ?? "high";
             _settings.ShowThinking = _showThinking.Checked == true;
             _settings.MaxCostUsd = cost;

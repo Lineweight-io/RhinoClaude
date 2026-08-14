@@ -28,19 +28,78 @@ namespace RhinoClaude.Services.Agent
 
         private RhinoDoc Doc => _query.Doc;
 
+        /// <summary>What this session has changed. Feeds the self-review's checks and framing.</summary>
+        public SessionMutationLog MutationLog { get; } = new SessionMutationLog();
+
         /// <summary>
         /// Run a mutation inside its own undo record. The <c>using</c> is what guarantees
         /// EndUndoRecord runs even when the body throws.
+        ///
+        /// The object-id delta is measured around the body rather than reported by each tool:
+        /// tools already return their own ids, but Rhino also replaces ids behind the scenes
+        /// (a transform, a Brep replace), and self-review needs the truth rather than the
+        /// tool's view of it.
         /// </summary>
         private T InUndoRecord<T>(string toolName, Func<RhinoDoc, T> body)
         {
             var doc = Doc;
+            var before = SnapshotIds(doc);
+
             using (_snapshots.BeginMutation(toolName))
             {
                 var result = body(doc);
                 doc.Views.Redraw();
+                RecordMutation(doc, toolName, before);
                 return result;
             }
+        }
+
+        private static HashSet<Guid> SnapshotIds(RhinoDoc doc)
+        {
+            var ids = new HashSet<Guid>();
+            foreach (var obj in doc.Objects)
+                if (!obj.IsDeleted) ids.Add(obj.Id);
+            return ids;
+        }
+
+        private void RecordMutation(RhinoDoc doc, string toolName, HashSet<Guid> before)
+        {
+            var after = SnapshotIds(doc);
+
+            var mutation = new SessionMutation { ToolName = toolName };
+            mutation.CreatedIds.AddRange(after.Except(before).Select(g => g.ToString()));
+            mutation.DeletedIds.AddRange(before.Except(after).Select(g => g.ToString()));
+
+            var box = BoundingBox.Unset;
+            foreach (var id in after.Except(before))
+            {
+                var obj = doc.Objects.FindId(id);
+                if (obj?.Geometry == null) continue;
+
+                var objectBox = obj.Geometry.GetBoundingBox(true);
+                if (objectBox.IsValid) box.Union(objectBox);
+
+                var layer = doc.Layers[obj.Attributes.LayerIndex];
+                if (layer != null && !mutation.LayersTouched.Contains(layer.FullPath))
+                    mutation.LayersTouched.Add(layer.FullPath);
+            }
+
+            if (box.IsValid)
+                mutation.AffectedBox = new[] { box.Min.X, box.Min.Y, box.Min.Z, box.Max.X, box.Max.Y, box.Max.Z };
+
+            MutationLog.Add(mutation);
+        }
+
+        /// <summary>
+        /// ensure_layer creates a layer without creating any object, so the layer would not
+        /// otherwise appear in the log — and the "did you leave a layer empty" check depends on it.
+        /// </summary>
+        private void NoteLayerTouched(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return;
+            var mutation = new SessionMutation { ToolName = "ensure_layer" };
+            mutation.LayersTouched.Add(fullPath);
+            MutationLog.Add(mutation);
         }
 
         // ── ensure_layer ──────────────────────────────────────────────
@@ -49,6 +108,8 @@ namespace RhinoClaude.Services.Agent
         {
             if (string.IsNullOrWhiteSpace(fullPath))
                 throw new ArgumentException("fullPath is required.");
+
+            NoteLayerTouched(fullPath);
 
             return InUndoRecord("ensure_layer", doc =>
             {
@@ -249,6 +310,7 @@ namespace RhinoClaude.Services.Agent
                 throw new ArgumentException("layerFullPath is required.");
 
             var objects = ids.Select(_query.RequireObject).ToList();
+            NoteLayerTouched(layerFullPath);
 
             return InUndoRecord("assign_objects_to_layer", doc =>
             {

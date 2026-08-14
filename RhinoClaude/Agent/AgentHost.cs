@@ -69,6 +69,7 @@ namespace RhinoClaude.Agent
 
         public ViewCaptureService Capture { get; private set; }
         public ScriptExecutorService Script { get; private set; }
+        public SelfReviewService Review { get; private set; }
         public ToolRegistry Registry { get; private set; }
         public AgentSession Session { get; private set; }
 
@@ -89,6 +90,11 @@ namespace RhinoClaude.Agent
                 DefaultTimeoutSeconds = Settings.ScriptTimeoutSeconds
             };
 
+            Review = new SelfReviewService(Query, Capture, client, Mutation.MutationLog)
+            {
+                ReviewerModel = Settings.ReviewerModel
+            };
+
             Registry = BuildRegistry();
 
             bool scriptEnabled = Settings.EnableScriptTool;
@@ -98,8 +104,11 @@ namespace RhinoClaude.Agent
                 Settings,
                 () => SystemPrompt.Build(scriptEnabled));
 
+            WireReview(Session);
+
             History.Add(Session);
             Snapshots.Forget();
+            Mutation.MutationLog.Clear();
             return Session;
         }
 
@@ -107,6 +116,8 @@ namespace RhinoClaude.Agent
         public void ApplySettings()
         {
             Script.DefaultTimeoutSeconds = Settings.ScriptTimeoutSeconds;
+            Review.ReviewerModel = Settings.ReviewerModel;
+            if (Session != null) WireReview(Session);
 
             var current = Session;
             bool scriptEnabled = Settings.EnableScriptTool;
@@ -123,6 +134,35 @@ namespace RhinoClaude.Agent
                 current.Settings.MaxIterations = Settings.MaxIterations;
                 current.Settings.MaxTokens = Settings.MaxTokens;
             }
+        }
+
+        /// <summary>
+        /// Connect signal_done to self-review. The facts and captures must be gathered on
+        /// Rhino's UI thread; only the reviewer HTTP call runs in the background.
+        /// </summary>
+        private void WireReview(AgentSession session)
+        {
+            if (!Settings.EnableSelfReview)
+            {
+                session.ReviewHook = null;
+                return;
+            }
+
+            session.ReviewHook = async (summary, expectedOutcome, token) =>
+            {
+                Review.ReviewerModel = Settings.ReviewerModel;
+
+                // The mark is 0 because review covers the whole session's work, not just the
+                // last turn — the user judges the model in front of them, not a diff.
+                var facts = await ToolDispatcher.RunOnUiThreadAsync(
+                    () => Review.CollectFacts(session.LastUserMessage, summary, expectedOutcome, 0))
+                    .ConfigureAwait(false);
+
+                var captures = await ToolDispatcher.RunOnUiThreadAsync(
+                    () => Review.CaptureForReview(0)).ConfigureAwait(false);
+
+                return await Review.ReviewAsync(facts, captures, token).ConfigureAwait(false);
+            };
         }
 
         /// <summary>

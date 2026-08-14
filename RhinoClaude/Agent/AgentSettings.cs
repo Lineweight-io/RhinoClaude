@@ -14,7 +14,27 @@ namespace RhinoClaude.Agent
         /// </summary>
         public const string DefaultLoopModel = "claude-sonnet-5";
 
+        /// <summary>
+        /// Self-review model (plan §8.1 chose Opus 5). A second opinion is worth more from a
+        /// stronger model than the one that did the work, and the review is one short call.
+        /// </summary>
+        public const string DefaultReviewerModel = "claude-opus-5";
+
         public string LoopModel { get; set; } = DefaultLoopModel;
+        public string ReviewerModel { get; set; } = DefaultReviewerModel;
+
+        /// <summary>Run self-review when the agent calls signal_done.</summary>
+        public bool EnableSelfReview { get; set; } = true;
+
+        /// <summary>Plan §5.5: beyond this many iterate cycles per turn, force ask_user.</summary>
+        public int MaxReviewCycles { get; set; } = 2;
+
+        /// <summary>
+        /// Plan §5.1 trigger 2: review defensively after this many iterations without one, even
+        /// if the agent has not called signal_done. Catches a loop that is churning without
+        /// noticing it has gone wrong. 0 disables the defensive trigger.
+        /// </summary>
+        public int DefensiveReviewAfterIterations { get; set; } = 10;
         public double MaxCostUsd { get; set; } = 0.50;
         public int MaxIterations { get; set; } = 25;
 
@@ -58,6 +78,10 @@ namespace RhinoClaude.Agent
         public AgentSettings Clone() => new AgentSettings
         {
             LoopModel = LoopModel,
+            ReviewerModel = ReviewerModel,
+            EnableSelfReview = EnableSelfReview,
+            MaxReviewCycles = MaxReviewCycles,
+            DefensiveReviewAfterIterations = DefensiveReviewAfterIterations,
             MaxCostUsd = MaxCostUsd,
             MaxIterations = MaxIterations,
             MaxTokens = MaxTokens,

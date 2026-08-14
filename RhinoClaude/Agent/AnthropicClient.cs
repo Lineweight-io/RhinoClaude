@@ -156,9 +156,16 @@ namespace RhinoClaude.Agent
 
         /// <summary>
         /// Non-streaming single call. Used by ClaudeTag, which stays one-shot because its
-        /// output is small and structured.
+        /// output is small and structured, and by the self-review pass.
         /// </summary>
-        public async Task<AgentMessage> SendAsync(MessagesRequest request, CancellationToken cancellationToken)
+        /// <param name="usageSink">
+        /// Optional. Filled with the response's token usage so callers that bill the call
+        /// (self-review) can price it. Left null by callers that do not care.
+        /// </param>
+        public async Task<AgentMessage> SendAsync(
+            MessagesRequest request,
+            CancellationToken cancellationToken,
+            TokenUsage usageSink = null)
         {
             if (!IsConfigured)
                 throw new InvalidOperationException("No Anthropic API key configured. Run 'ClaudeSetKey' first.");
@@ -190,10 +197,29 @@ namespace RhinoClaude.Agent
                                 content.GetRawText(), MessagesRequest.SerializerOptions);
                             if (blocks != null) message.Content.AddRange(blocks);
                         }
+
+                        if (usageSink != null &&
+                            doc.RootElement.TryGetProperty("usage", out var usage) &&
+                            usage.ValueKind == JsonValueKind.Object)
+                        {
+                            usageSink.InputTokens += ReadInt(usage, "input_tokens");
+                            usageSink.OutputTokens += ReadInt(usage, "output_tokens");
+                            usageSink.CacheCreationInputTokens += ReadInt(usage, "cache_creation_input_tokens");
+                            usageSink.CacheReadInputTokens += ReadInt(usage, "cache_read_input_tokens");
+                        }
                     }
                     return message;
                 }
             }
+        }
+
+        private static int ReadInt(JsonElement parent, string name)
+        {
+            return parent.TryGetProperty(name, out var value) &&
+                   value.ValueKind == JsonValueKind.Number &&
+                   value.TryGetInt32(out int parsed)
+                ? parsed
+                : 0;
         }
 
         private static string DescribeError(HttpStatusCode status, string body)

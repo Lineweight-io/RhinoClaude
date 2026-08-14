@@ -21,6 +21,15 @@ namespace RhinoClaude.Agent
         }
     }
 
+    /// <summary>A model call made outside the loop's own model — currently self-review.</summary>
+    public sealed class SideCall
+    {
+        public string Label { get; set; }
+        public string ModelId { get; set; }
+        public TokenUsage Usage { get; set; } = new TokenUsage();
+        public double CostUsd { get; set; }
+    }
+
     /// <summary>
     /// Token accounting for one agent turn, plus the two guardrails from the plan:
     /// a per-turn USD ceiling and an iteration cap.
@@ -99,7 +108,16 @@ namespace RhinoClaude.Agent
         /// <summary>Per-iteration usage, for the cost-breakdown popover.</summary>
         public List<TokenUsage> PerIteration { get; } = new List<TokenUsage>();
 
-        public double SpentUsd => _pricing.CostOf(TotalUsage);
+        /// <summary>
+        /// Calls made on a different model during the turn — currently the self-review pass,
+        /// which runs on Opus while the loop runs on Sonnet. Priced on their own model so the
+        /// meter stays honest; they count toward the ceiling but not the iteration cap.
+        /// </summary>
+        public List<SideCall> SideCalls { get; } = new List<SideCall>();
+
+        public double SideSpendUsd { get; private set; }
+
+        public double SpentUsd => _pricing.CostOf(TotalUsage) + SideSpendUsd;
         public double RemainingUsd => Math.Max(0.0, MaxCostUsd - SpentUsd);
         public double FractionSpent => MaxCostUsd <= 0 ? 1.0 : Math.Min(1.0, SpentUsd / MaxCostUsd);
 
@@ -114,6 +132,25 @@ namespace RhinoClaude.Agent
             var snapshot = usage != null ? usage.Clone() : new TokenUsage();
             PerIteration.Add(snapshot);
             TotalUsage.Add(snapshot);
+        }
+
+        /// <summary>
+        /// Record a call made on another model (the self-review pass). It does not advance the
+        /// iteration counter — it is not a loop turn — but its cost does count against the
+        /// per-turn ceiling, priced at its own model's rates.
+        /// </summary>
+        public void RecordSideCall(string label, string modelId, TokenUsage usage)
+        {
+            var snapshot = usage != null ? usage.Clone() : new TokenUsage();
+            double cost = PricingFor(modelId).CostOf(snapshot);
+            SideCalls.Add(new SideCall
+            {
+                Label = label,
+                ModelId = modelId,
+                Usage = snapshot,
+                CostUsd = cost
+            });
+            SideSpendUsd += cost;
         }
 
         public string Describe()
@@ -138,6 +175,18 @@ namespace RhinoClaude.Agent
                     i + 1, u.InputTokens, u.OutputTokens,
                     u.CacheCreationInputTokens, u.CacheReadInputTokens, _pricing.CostOf(u)));
             }
+            if (SideCalls.Count > 0)
+            {
+                sb.AppendLine();
+                foreach (var call in SideCalls)
+                {
+                    sb.AppendLine(string.Format(
+                        "  {0} ({1}):  in {2,7:n0}  out {3,6:n0}  ${4:0.0000}",
+                        call.Label, call.ModelId,
+                        call.Usage.InputTokens, call.Usage.OutputTokens, call.CostUsd));
+                }
+            }
+
             sb.AppendLine();
             sb.AppendLine(string.Format("  TOTAL:   in {0,7:n0}  out {1,6:n0}                          ${2:0.0000}",
                 TotalUsage.InputTokens, TotalUsage.OutputTokens, SpentUsd));
