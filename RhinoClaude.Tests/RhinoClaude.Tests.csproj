@@ -33,6 +33,14 @@
     <Compile Include="..\RhinoClaude\Agent\StreamAccumulator.cs" Link="Linked\StreamAccumulator.cs" />
     <Compile Include="..\RhinoClaude\Agent\CostBudget.cs" Link="Linked\CostBudget.cs" />
     <Compile Include="..\RhinoClaude\Agent\ModelCapabilities.cs" Link="Linked\ModelCapabilities.cs" />
+    <!-- The provider layer: settings, the catalog, and both directions of the OpenAI
+         translation. All Rhino-free by the same rule as everything else here. -->
+    <Compile Include="..\RhinoClaude\Agent\AgentSettings.cs" Link="Linked\AgentSettings.cs" />
+    <Compile Include="..\RhinoClaude\Agent\ILlmClient.cs" Link="Linked\ILlmClient.cs" />
+    <Compile Include="..\RhinoClaude\Agent\LlmProviders.cs" Link="Linked\LlmProviders.cs" />
+    <Compile Include="..\RhinoClaude\Agent\OpenAiTranslator.cs" Link="Linked\OpenAiTranslator.cs" />
+    <Compile Include="..\RhinoClaude\Agent\OpenAiStreamTranslator.cs" Link="Linked\OpenAiStreamTranslator.cs" />
+    <Compile Include="..\RhinoClaude\Agent\OpenAiCompatibleClient.cs" Link="Linked\OpenAiCompatibleClient.cs" />
     <Compile Include="..\RhinoClaude\Agent\ReviewModels.cs" Link="Linked\ReviewModels.cs" />
     <Compile Include="..\RhinoClaude\Agent\SessionMutationLog.cs" Link="Linked\SessionMutationLog.cs" />
     <Compile Include="..\RhinoClaude\Agent\HistoryCompactor.cs" Link="Linked\HistoryCompactor.cs" />

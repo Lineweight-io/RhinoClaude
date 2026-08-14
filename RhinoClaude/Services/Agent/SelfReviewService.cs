@@ -27,19 +27,28 @@ namespace RhinoClaude.Services.Agent
 
         private readonly RhinoQueryService _query;
         private readonly ViewCaptureService _capture;
-        private readonly AnthropicClient _client;
+        private ILlmClient _client;
         private readonly SessionMutationLog _mutations;
 
         public SelfReviewService(
             RhinoQueryService query,
             ViewCaptureService capture,
-            AnthropicClient client,
+            ILlmClient client,
             SessionMutationLog mutations)
         {
             _query = query ?? throw new ArgumentNullException(nameof(query));
             _capture = capture ?? throw new ArgumentNullException(nameof(capture));
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
+        }
+
+        /// <summary>
+        /// Follow the loop onto a new provider. The reviewer always runs on the same service as
+        /// the loop — a review that needed a second API key configured would just be off.
+        /// </summary>
+        public void UseClient(ILlmClient client)
+        {
+            if (client != null) _client = client;
         }
 
         public string ReviewerModel { get; set; } = AgentSettings.DefaultReviewerModel;

@@ -1,6 +1,7 @@
 using Rhino;
 using Rhino.Commands;
 using Rhino.UI;
+using RhinoClaude.Agent;
 using RhinoClaude.UI;
 
 namespace RhinoClaude.Commands
@@ -30,9 +31,16 @@ namespace RhinoClaude.Commands
                 RhinoApp.WriteLine("RhinoClaude: chat panel opened.");
             }
 
-            var plugin = RhinoClaudePlugin.Instance;
-            if (plugin != null && !plugin.AnthropicClient.IsConfigured)
-                RhinoApp.WriteLine("RhinoClaude: no API key configured — run 'ClaudeSetKey' first.");
+            // Reported for whichever provider is selected; only the Anthropic one has a
+            // command-line way to set its key.
+            var client = doc != null ? AgentHost.For(doc).Client : null;
+            if (client != null && !client.IsConfigured)
+            {
+                RhinoApp.WriteLine(client is AnthropicClient
+                    ? "RhinoClaude: no API key configured — run 'ClaudeSetKey' first."
+                    : "RhinoClaude: no API key configured for " + client.ProviderName +
+                      " — add one in the panel's settings gear.");
+            }
 
             return Result.Success;
         }

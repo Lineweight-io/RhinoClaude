@@ -52,7 +52,6 @@ namespace RhinoClaude.Agent
     /// </summary>
     public sealed class AgentSession
     {
-        private readonly AnthropicClient _client;
         private readonly ToolRegistry _registry;
         private readonly ToolDispatcher _dispatcher;
         private readonly Func<string> _systemPromptFactory;
@@ -60,12 +59,12 @@ namespace RhinoClaude.Agent
         private CancellationTokenSource _cts;
 
         public AgentSession(
-            AnthropicClient client,
+            ILlmClient client,
             ToolRegistry registry,
             AgentSettings settings,
             Func<string> systemPromptFactory)
         {
-            _client = client ?? throw new ArgumentNullException(nameof(client));
+            Client = client ?? throw new ArgumentNullException(nameof(client));
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             _dispatcher = new ToolDispatcher(registry);
             _systemPromptFactory = systemPromptFactory ?? (() => string.Empty);
@@ -74,6 +73,24 @@ namespace RhinoClaude.Agent
             Id = Guid.NewGuid();
             CreatedUtc = DateTime.UtcNow;
         }
+
+        /// <summary>
+        /// The provider the loop talks to. Swapped by <c>AgentHost.ApplySettings</c> when the
+        /// user changes provider, which is why it is not readonly — but only between turns:
+        /// changing it mid-turn would leave the conversation half-translated.
+        /// </summary>
+        public ILlmClient Client
+        {
+            get => _client;
+            set
+            {
+                if (value == null) throw new ArgumentNullException(nameof(value));
+                if (IsRunning) throw new InvalidOperationException("Cannot change provider while a turn is running.");
+                _client = value;
+            }
+        }
+
+        private ILlmClient _client;
 
         public Guid Id { get; }
         public DateTime CreatedUtc { get; }
@@ -342,7 +359,7 @@ namespace RhinoClaude.Agent
                     SetState(AgentState.Cancelled, null);
                     finalMessage = "Cancelled.";
                 }
-                catch (AnthropicApiException ex)
+                catch (LlmApiException ex)
                 {
                     SetState(AgentState.Errored, ex.Message);
                     finalMessage = ex.Message;

@@ -29,14 +29,20 @@ namespace RhinoClaude.Commands
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            var plugin = RhinoClaudePlugin.Instance;
-            if (plugin?.AnthropicClient == null)
+            var host = AgentHost.For(doc);
+            if (host.Client == null)
             {
                 RhinoApp.WriteLine("RhinoClaude: the plugin is not initialised.");
                 return Result.Failure;
             }
 
-            var host = AgentHost.For(doc);
+            // Runs on whichever provider the panel is set to, so a user who has moved off
+            // Anthropic is not asked for a Claude key by a side command.
+            if (!host.Client.IsConfigured)
+            {
+                RhinoApp.WriteLine("RhinoClaude: no API key configured for " + host.Client.ProviderName + ".");
+                return Result.Failure;
+            }
 
             var layers = doc.Layers.Where(l => !l.IsDeleted)
                                    .Select(l => l.FullPath)
@@ -57,7 +63,7 @@ namespace RhinoClaude.Commands
             LayerConventionMap proposed;
             try
             {
-                proposed = Ask(plugin.AnthropicClient, host.Settings, layers);
+                proposed = Ask(host.Client, host.Settings, layers);
             }
             catch (Exception ex)
             {
@@ -139,7 +145,7 @@ namespace RhinoClaude.Commands
         // ── The one-shot call ─────────────────────────────────────────
 
         private static LayerConventionMap Ask(
-            AnthropicClient client, AgentSettings settings, List<string> layers)
+            ILlmClient client, AgentSettings settings, List<string> layers)
         {
             var request = new MessagesRequest
             {

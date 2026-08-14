@@ -10,6 +10,7 @@ using Rhino;
 using Rhino.DocObjects;
 using Rhino.UI;
 using RhinoClaude.Agent;
+using RhinoClaude.Services.Agent;
 
 namespace RhinoClaude.UI
 {
@@ -262,10 +263,15 @@ namespace RhinoClaude.UI
             var host = Host;
             if (host == null) return;
 
-            var plugin = RhinoClaudePlugin.Instance;
-            if (plugin == null || !plugin.AnthropicClient.IsConfigured)
+            // Checked against the provider actually selected, not against Anthropic — a
+            // DeepSeek-only user has no sk-ant- key and must not be stopped here.
+            var client = host.Session?.Client;
+            if (client == null || !client.IsConfigured)
             {
-                AppendSystemNote("No API key configured. Run the ClaudeSetKey command, then try again.");
+                AppendSystemNote(client == null || client is AnthropicClient
+                    ? "No API key configured. Run the ClaudeSetKey command, then try again."
+                    : "No API key configured for " + client.ProviderName +
+                      ". Add one in the settings gear, then try again.");
                 return;
             }
 
@@ -433,7 +439,9 @@ namespace RhinoClaude.UI
             if (updated == null) return;
 
             bool scriptWas = host.Settings.EnableScriptTool;
+            var providerWas = host.Settings.Provider;
 
+            host.Settings.AdoptProviderSettings(updated);
             host.Settings.LoopModel = updated.LoopModel;
             host.Settings.MaxCostUsd = updated.MaxCostUsd;
             host.Settings.MaxIterations = updated.MaxIterations;
@@ -446,15 +454,27 @@ namespace RhinoClaude.UI
             host.Settings.ReviewerModel = updated.ReviewerModel;
             host.Settings.EnableSelfReview = updated.EnableSelfReview;
             host.Settings.MaxReviewCycles = updated.MaxReviewCycles;
+            LlmSettingsStore.Persist(host.Settings);
             host.ApplySettings();
 
-            string effortNote = ModelCapabilities.SupportsEffort(host.Settings.LoopModel)
+            bool anthropic = host.Settings.Provider == LlmProvider.Anthropic;
+            string effortNote = anthropic && ModelCapabilities.SupportsEffort(host.Settings.LoopModel)
                 ? ", effort " + ModelCapabilities.ClampEffort(host.Settings.LoopModel, host.Settings.Effort)
-                : " (this model has no effort setting)";
+                : anthropic ? " (this model has no effort setting)" : string.Empty;
 
-            AppendSystemNote("Settings updated. Model: " + host.Settings.LoopModel +
+            AppendSystemNote("Settings updated. " +
+                             LlmProviderCatalog.Get(host.Settings.Provider).DisplayName + " / " +
+                             host.Settings.LoopModel +
                              ", budget $" + host.Settings.MaxCostUsd.ToString("0.00") +
                              ", max " + host.Settings.MaxIterations + " iterations" + effortNote + ".");
+
+            if (providerWas != host.Settings.Provider)
+            {
+                AppendSystemNote(
+                    "Provider changed to " + LlmProviderCatalog.Get(host.Settings.Provider).DisplayName +
+                    ". Start a new session (⟲ New) before continuing — this conversation was written " +
+                    "for the old provider and its tool-call ids will not line up.");
+            }
 
             if (scriptWas != host.Settings.EnableScriptTool)
                 AppendSystemNote("The script tool was toggled — that takes effect in the next session (⟲ New).");

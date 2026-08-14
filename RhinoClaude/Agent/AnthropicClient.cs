@@ -11,17 +11,15 @@ using System.Threading.Tasks;
 
 namespace RhinoClaude.Agent
 {
-    /// <summary>Thrown for non-retryable API failures so callers see the status and body.</summary>
-    public sealed class AnthropicApiException : Exception
+    /// <summary>
+    /// Thrown for non-retryable API failures so callers see the status and body. Derives from
+    /// <see cref="LlmApiException"/> so one catch clause in the loop covers every provider.
+    /// </summary>
+    public sealed class AnthropicApiException : LlmApiException
     {
-        public HttpStatusCode StatusCode { get; }
-        public string ResponseBody { get; }
-
         public AnthropicApiException(HttpStatusCode status, string body, string message)
-            : base(message)
+            : base(status, body, message, "Anthropic")
         {
-            StatusCode = status;
-            ResponseBody = body;
         }
     }
 
@@ -31,7 +29,7 @@ namespace RhinoClaude.Agent
     ///
     /// No RhinoCommon dependency — everything Rhino-facing is marshalled by the caller.
     /// </summary>
-    public sealed class AnthropicClient
+    public sealed class AnthropicClient : ILlmClient
     {
         private const string ApiUrl = "https://api.anthropic.com/v1/messages";
         private const string ApiVersion = "2023-06-01";
@@ -41,6 +39,17 @@ namespace RhinoClaude.Agent
         private static readonly HttpClient Http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
 
         private string _apiKey;
+
+        public string ProviderName => "Anthropic";
+
+        /// <summary>
+        /// Display only. This client is model-agnostic — the model that actually goes out is
+        /// whatever <see cref="MessagesRequest.Model"/> carries, which is how the loop and the
+        /// reviewer run on different models through one client.
+        /// </summary>
+        public string ModelId { get; set; }
+
+        public bool AcceptsImages => true;
 
         public bool IsConfigured => !string.IsNullOrEmpty(_apiKey);
 
@@ -63,7 +72,7 @@ namespace RhinoClaude.Agent
                 throw new InvalidOperationException("No Anthropic API key configured. Run 'ClaudeSetKey' first.");
 
             request.Stream = true;
-            string body = request.ToJson();
+            string body = Serialize(request);
 
             int attempt = 0;
             while (true)
@@ -171,7 +180,7 @@ namespace RhinoClaude.Agent
                 throw new InvalidOperationException("No Anthropic API key configured. Run 'ClaudeSetKey' first.");
 
             request.Stream = null;
-            string body = request.ToJson();
+            string body = Serialize(request);
 
             using (var httpRequest = new HttpRequestMessage(HttpMethod.Post, ApiUrl))
             {
@@ -211,6 +220,60 @@ namespace RhinoClaude.Agent
                     return message;
                 }
             }
+        }
+
+        /// <summary>
+        /// Serialize the request, dropping any thinking block that has no signature.
+        ///
+        /// Anthropic always signs its own thinking blocks, so on the normal path this returns
+        /// the original list untouched. The case it exists for is a session that ran on an
+        /// OpenAI-compatible provider first: those stream reasoning text with nothing to sign
+        /// it with, and replaying an unsigned thinking block here is a 400.
+        /// </summary>
+        private static string Serialize(MessagesRequest request)
+        {
+            var original = request.Messages;
+            var sanitized = StripUnsignedThinking(original);
+            if (ReferenceEquals(sanitized, original)) return request.ToJson();
+
+            request.Messages = sanitized;
+            try { return request.ToJson(); }
+            finally { request.Messages = original; }
+        }
+
+        private static List<AgentMessage> StripUnsignedThinking(List<AgentMessage> messages)
+        {
+            if (messages == null) return null;
+
+            bool needsWork = false;
+            foreach (var message in messages)
+            {
+                foreach (var block in message.Content)
+                {
+                    if (block is ThinkingBlock thinking && string.IsNullOrEmpty(thinking.Signature))
+                    {
+                        needsWork = true;
+                        break;
+                    }
+                }
+                if (needsWork) break;
+            }
+
+            if (!needsWork) return messages;
+
+            var copy = new List<AgentMessage>(messages.Count);
+            foreach (var message in messages)
+            {
+                var replacement = new AgentMessage { Role = message.Role };
+                foreach (var block in message.Content)
+                {
+                    if (block is ThinkingBlock thinking && string.IsNullOrEmpty(thinking.Signature)) continue;
+                    replacement.Content.Add(block);
+                }
+                // A message stripped down to nothing would be rejected in its own right.
+                if (replacement.Content.Count > 0) copy.Add(replacement);
+            }
+            return copy;
         }
 
         private static int ReadInt(JsonElement parent, string name)
