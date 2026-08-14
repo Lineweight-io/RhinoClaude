@@ -59,7 +59,8 @@ namespace RhinoClaude.Tests
             Assert.Equal(2, budget.Iterations);
             Assert.Equal(30_000, budget.TotalUsage.InputTokens);
             Assert.Equal(3_000, budget.TotalUsage.OutputTokens);
-            Assert.Equal(0.03 + 0.045, budget.SpentUsd, 6);
+            // 30k in at $3/MTok = $0.090; 3k out at $15/MTok = $0.045.
+            Assert.Equal(0.090 + 0.045, budget.SpentUsd, 6);
             Assert.False(budget.Exceeded);
         }
 

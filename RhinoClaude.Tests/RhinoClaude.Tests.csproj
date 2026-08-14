@@ -6,6 +6,9 @@
       and builds under a .NET 7, 8, or 9 SDK.
     -->
     <TargetFramework>net7.0</TargetFramework>
+    <!-- Compile against net7.0 to match the plugin, but run on whatever newer runtime the
+         machine has — a .NET 8/9 SDK does not ship the .NET 7 runtime. -->
+    <RollForward>LatestMajor</RollForward>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <RootNamespace>RhinoClaude.Tests</RootNamespace>

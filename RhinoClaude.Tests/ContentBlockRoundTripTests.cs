@@ -120,7 +120,7 @@ namespace RhinoClaude.Tests
 
             using var doc = JsonDocument.Parse(json);
             Assert.Equal(JsonValueKind.Object, doc.RootElement.GetProperty("input").ValueKind);
-            Assert.Equal(0, doc.RootElement.GetProperty("input").EnumerateObject().Count());
+            Assert.Empty(doc.RootElement.GetProperty("input").EnumerateObject());
         }
 
         [Fact]

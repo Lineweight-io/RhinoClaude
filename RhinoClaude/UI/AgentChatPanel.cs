@@ -7,6 +7,7 @@ using System.Threading;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
+using Rhino.DocObjects;
 using Rhino.UI;
 using RhinoClaude.Agent;
 

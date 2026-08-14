@@ -356,10 +356,12 @@ namespace RhinoClaude.Agent
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? Stream { get; set; }
 
+        // global:: is required — the System property on this class otherwise shadows the
+        // System namespace inside the initializer.
         public static readonly JsonSerializerOptions SerializerOptions = new JsonSerializerOptions
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            Encoder = global::System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
         };
 
         public string ToJson() => JsonSerializer.Serialize(this, SerializerOptions);

@@ -53,13 +53,18 @@ namespace RhinoClaude.Tests
         {
             var recorder = new FakeRecorder();
 
-            Assert.Throws<InvalidOperationException>(() =>
+            // Typed as Action deliberately: a lambda whose body always throws is convertible
+            // to Func<Task> too, and xunit's overload resolution then picks the obsolete async
+            // overload.
+            Action body = () =>
             {
                 using (new UndoScope(recorder, "agent:create_box"))
                 {
                     throw new InvalidOperationException("Rhino refused the operation.");
                 }
-            });
+            };
+
+            Assert.Throws<InvalidOperationException>(body);
 
             // The record must still be closed, or every later undo record nests inside it.
             Assert.Single(recorder.Ended);
@@ -144,11 +149,13 @@ namespace RhinoClaude.Tests
             var recorder = new FakeRecorder();
             var log = new UndoRecordLog();
 
-            Assert.Throws<Exception>(() =>
+            Action body = () =>
             {
                 using (new UndoScope(recorder, "agent:create_box", log))
                     throw new Exception("boom");
-            });
+            };
+
+            Assert.Throws<Exception>(body);
 
             Assert.Equal(1, log.CompletedCount);
         }

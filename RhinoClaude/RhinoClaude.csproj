@@ -26,6 +26,10 @@
   <PropertyGroup Condition="'$(TargetFramework)' == 'net7.0'">
     <DefineConstants>$(DefineConstants);RHINOCORE</DefineConstants>
     <PlatformTarget>x64</PlatformTarget>
+    <!-- CA1416: System.Drawing.Common bitmap encoding is Windows-only. Rhino for Windows is
+         the only host this plugin targets, so the platform-compatibility analyser has
+         nothing useful to say here. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <!--
