@@ -32,7 +32,10 @@
     <Compile Include="..\RhinoClaude\Agent\SseParser.cs" Link="Linked\SseParser.cs" />
     <Compile Include="..\RhinoClaude\Agent\StreamAccumulator.cs" Link="Linked\StreamAccumulator.cs" />
     <Compile Include="..\RhinoClaude\Agent\CostBudget.cs" Link="Linked\CostBudget.cs" />
+    <Compile Include="..\RhinoClaude\Agent\PromptCache.cs" Link="Linked\PromptCache.cs" />
+    <Compile Include="..\RhinoClaude\Agent\PayloadCaps.cs" Link="Linked\PayloadCaps.cs" />
     <Compile Include="..\RhinoClaude\Agent\ModelCapabilities.cs" Link="Linked\ModelCapabilities.cs" />
+    <Compile Include="..\RhinoClaude\Agent\AgentSettings.cs" Link="Linked\AgentSettings.cs" />
     <Compile Include="..\RhinoClaude\Agent\ReviewModels.cs" Link="Linked\ReviewModels.cs" />
     <Compile Include="..\RhinoClaude\Agent\SessionMutationLog.cs" Link="Linked\SessionMutationLog.cs" />
     <Compile Include="..\RhinoClaude\Agent\HistoryCompactor.cs" Link="Linked\HistoryCompactor.cs" />

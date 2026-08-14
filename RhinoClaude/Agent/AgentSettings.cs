@@ -10,16 +10,32 @@ namespace RhinoClaude.Agent
     public sealed class AgentSettings
     {
         /// <summary>
-        /// Loop model. The plan named Sonnet 4.5; Sonnet 5 supersedes it at the same
-        /// $3/$15 per MTok with markedly better agentic and coding behaviour.
+        /// Loop model. The plan named Sonnet 4.5, then Sonnet 5; Haiku 4.5 is the current
+        /// default, at $1/$5 per MTok against Sonnet 5's $3/$15 list.
+        ///
+        /// Two things follow from the choice and are handled rather than assumed. Haiku 4.5
+        /// takes neither <c>thinking</c> nor <c>output_config.effort</c> — <see
+        /// cref="ModelCapabilities"/> already omits both, and the settings gear greys them
+        /// out — so the <see cref="Effort"/> and <see cref="ShowThinking"/> values below are
+        /// simply inert while this model is selected. And its context window is 200K rather
+        /// than Sonnet 5's 1M, which is the one place a busy document could now hit a wall
+        /// that it would not have before.
         /// </summary>
-        public const string DefaultLoopModel = "claude-sonnet-5";
+        public const string DefaultLoopModel = "claude-haiku-4-5-20251001";
 
         /// <summary>
         /// Self-review model (plan §8.1 chose Opus 5). A second opinion is worth more from a
         /// stronger model than the one that did the work, and the review is one short call.
         /// </summary>
         public const string DefaultReviewerModel = "claude-opus-5";
+
+        /// <summary>
+        /// One-shot calls that are not the loop — currently ClaudeTag's description-to-tag
+        /// classification. Named separately rather than borrowing
+        /// <see cref="DefaultLoopModel"/> so that changing the loop's model does not silently
+        /// move every other call in the plugin with it.
+        /// </summary>
+        public const string DefaultUtilityModel = "claude-sonnet-5";
 
         public string LoopModel { get; set; } = DefaultLoopModel;
         public string ReviewerModel { get; set; } = DefaultReviewerModel;

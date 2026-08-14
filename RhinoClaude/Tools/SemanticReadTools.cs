@@ -205,7 +205,9 @@ namespace RhinoClaude.Tools
                 "Every face of a Mass with its orientation, roles, area, elevation range and openings. This " +
                 "is how you see a mass the way the architect does — face role and compass orientation are " +
                 "the two axes nearly every massing question runs along. Roles are computed from geometry " +
-                "each time you ask, not stored, so they are always current.",
+                "each time you ask, not stored, so they are always current. Returns the 30 largest " +
+                "matching faces; on a denser mass the response reports matchedFaceCount and truncated, " +
+                "and filtering by role or orientation is how you reach the rest.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""required"": [""massId""],
@@ -250,7 +252,9 @@ namespace RhinoClaude.Tools
             Description =
                 "The significant edges of a Mass — parapets, outside and inside corners, roof ridges, eaves — " +
                 "with their lengths and the faces they bound. Edges with role 'other' are omitted unless you " +
-                "ask for them: a Brep has many edges and only some are ones an architect would name.",
+                "ask for them: a Brep has many edges and only some are ones an architect would name. " +
+                "Returns the 60 longest matching edges; the response reports matchedEdgeCount and " +
+                "truncated, and filtering by role is how you reach the rest.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""required"": [""massId""],

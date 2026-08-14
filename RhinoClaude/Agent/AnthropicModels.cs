@@ -13,10 +13,33 @@ namespace RhinoClaude.Agent
     // converter. Keeping it hand-rolled also means the round-trip is
     // unit-testable without RhinoCommon on the test host.
 
+    /// <summary>
+    /// A prompt-cache breakpoint. Everything rendered before the block that carries one is
+    /// cached; later requests that share those exact bytes read it back at a tenth of the
+    /// input rate. Only the 5-minute (default) TTL is used — see
+    /// <see cref="CostBudget.CacheWriteMultiplier"/>, which prices the write at 1.25x.
+    /// </summary>
+    public sealed class CacheControl
+    {
+        /// <summary>The only value the plugin sets. Shared because the object is immutable.</summary>
+        public static readonly CacheControl Ephemeral = new CacheControl();
+
+        [JsonPropertyName("type")]
+        public string Type { get; set; } = "ephemeral";
+    }
+
     [JsonConverter(typeof(ContentBlockConverter))]
     public abstract class ContentBlock
     {
         public abstract string Type { get; }
+
+        /// <summary>
+        /// Set on the last block of a message to place a cache breakpoint there. Written by
+        /// <see cref="ContentBlockConverter"/>; never read back, because
+        /// <see cref="PromptCache"/> recomputes the placement on every request.
+        /// </summary>
+        [JsonIgnore]
+        public CacheControl CacheControl { get; set; }
     }
 
     /// <summary>Plain text from the assistant, or text sent to it.</summary>
@@ -203,7 +226,7 @@ namespace RhinoClaude.Agent
             // reconstructed object, so nothing the API sent is lost.
             if (value is UnknownBlock unknown)
             {
-                WriteRawObject(writer, unknown.RawJson);
+                WriteRawObject(writer, unknown.RawJson, unknown.CacheControl);
                 return;
             }
 
@@ -258,16 +281,43 @@ namespace RhinoClaude.Agent
                 writer.WriteEndObject();
             }
 
+            WriteCacheControl(writer, value.CacheControl);
             writer.WriteEndObject();
         }
 
-        private static void WriteRawObject(Utf8JsonWriter writer, string rawJson)
+        internal static void WriteCacheControl(Utf8JsonWriter writer, CacheControl cacheControl)
+        {
+            if (cacheControl == null) return;
+            writer.WritePropertyName("cache_control");
+            writer.WriteStartObject();
+            writer.WriteString("type", cacheControl.Type ?? "ephemeral");
+            writer.WriteEndObject();
+        }
+
+        private static void WriteRawObject(Utf8JsonWriter writer, string rawJson, CacheControl cacheControl = null)
         {
             string raw = string.IsNullOrWhiteSpace(rawJson) ? "{}" : rawJson;
             try
             {
                 using (var doc = JsonDocument.Parse(raw))
-                    doc.RootElement.WriteTo(writer);
+                {
+                    // A breakpoint on an unknown block has to be merged into the preserved
+                    // JSON rather than appended after it, so the object stays well-formed.
+                    if (cacheControl == null || doc.RootElement.ValueKind != JsonValueKind.Object)
+                    {
+                        doc.RootElement.WriteTo(writer);
+                        return;
+                    }
+
+                    writer.WriteStartObject();
+                    foreach (var property in doc.RootElement.EnumerateObject())
+                    {
+                        if (string.Equals(property.Name, "cache_control", StringComparison.Ordinal)) continue;
+                        property.WriteTo(writer);
+                    }
+                    WriteCacheControl(writer, cacheControl);
+                    writer.WriteEndObject();
+                }
             }
             catch (JsonException)
             {
@@ -354,6 +404,78 @@ namespace RhinoClaude.Agent
         [JsonPropertyName("input_schema")]
         [JsonConverter(typeof(RawJsonConverter))]
         public string InputSchemaJson { get; set; } = "{\"type\":\"object\",\"properties\":{}}";
+
+        /// <summary>
+        /// Set on the last tool only. The tools array renders first in the prompt, so a
+        /// breakpoint here caches every schema in one entry — see <see cref="PromptCache"/>.
+        /// </summary>
+        [JsonPropertyName("cache_control")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public CacheControl CacheControl { get; set; }
+    }
+
+    /// <summary>
+    /// The <c>system</c> field's two legal shapes. A plain string cannot carry
+    /// <c>cache_control</c>, so caching the system prompt means emitting the one-element
+    /// text-block array instead. Same rendered prompt either way — only the wire shape differs.
+    /// </summary>
+    [JsonConverter(typeof(SystemFieldConverter))]
+    public sealed class SystemField
+    {
+        public SystemField(string text, bool cached)
+        {
+            Text = text ?? string.Empty;
+            Cached = cached;
+        }
+
+        public string Text { get; }
+        public bool Cached { get; }
+    }
+
+    public sealed class SystemFieldConverter : JsonConverter<SystemField>
+    {
+        public override SystemField Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            using (var doc = JsonDocument.ParseValue(ref reader))
+            {
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.String)
+                    return new SystemField(root.GetString(), false);
+
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    bool cached = false;
+                    foreach (var block in root.EnumerateArray())
+                    {
+                        if (block.TryGetProperty("text", out var text)) sb.Append(text.GetString());
+                        if (block.TryGetProperty("cache_control", out _)) cached = true;
+                    }
+                    return new SystemField(sb.ToString(), cached);
+                }
+
+                return null;
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, SystemField value, JsonSerializerOptions options)
+        {
+            if (value == null) { writer.WriteNullValue(); return; }
+
+            if (!value.Cached)
+            {
+                writer.WriteStringValue(value.Text);
+                return;
+            }
+
+            writer.WriteStartArray();
+            writer.WriteStartObject();
+            writer.WriteString("type", "text");
+            writer.WriteString("text", value.Text);
+            ContentBlockConverter.WriteCacheControl(writer, CacheControl.Ephemeral);
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+        }
     }
 
     /// <summary>Writes a pre-serialized JSON string through verbatim instead of quoting it.</summary>
@@ -427,9 +549,25 @@ namespace RhinoClaude.Agent
         [JsonPropertyName("max_tokens")]
         public int MaxTokens { get; set; } = 16384;
 
+        /// <summary>
+        /// The system prompt. Kept as a plain string here; <see cref="SystemPayload"/> decides
+        /// which of the field's two wire shapes goes out.
+        /// </summary>
+        [JsonIgnore]
+        public string System { get; set; }
+
+        /// <summary>
+        /// Emit <c>system</c> as a text-block array with a cache breakpoint on it. Set by
+        /// <see cref="PromptCache.Apply"/>; the plain-string shape is the default because it
+        /// is what every non-loop caller (ClaudeTag, the reviewer) wants.
+        /// </summary>
+        [JsonIgnore]
+        public bool CacheSystemPrompt { get; set; }
+
         [JsonPropertyName("system")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string System { get; set; }
+        public SystemField SystemPayload =>
+            string.IsNullOrEmpty(System) ? null : new SystemField(System, CacheSystemPrompt);
 
         [JsonPropertyName("messages")]
         public List<AgentMessage> Messages { get; set; } = new List<AgentMessage>();
@@ -457,6 +595,12 @@ namespace RhinoClaude.Agent
         /// </summary>
         public void ApplyModelCapabilities(string effort, bool showThinking)
         {
+            // A max_tokens carried over from another model is a 400 on every turn, not a
+            // shorter answer. Clamped here as well as in the settings dialog so the wire stays
+            // valid however the value arrived.
+            int ceiling = ModelCapabilities.MaxOutputTokens(Model);
+            if (MaxTokens > ceiling) MaxTokens = ceiling;
+
             if (ModelCapabilities.SupportsAdaptiveThinking(Model))
             {
                 Thinking = new ThinkingConfig

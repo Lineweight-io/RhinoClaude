@@ -106,27 +106,41 @@ namespace RhinoClaude.Services.Agent
 
         // ── list_layers ───────────────────────────────────────────────
 
-        public object ListLayers(bool includeHidden)
+        public object ListLayers(bool includeHidden, int limit)
         {
             var doc = Doc;
-            var layers = new List<object>();
+            if (limit <= 0) limit = PayloadCaps.ListLayersDefaultLimit;
 
-            foreach (var layer in doc.Layers.Where(l => !l.IsDeleted))
+            var matched = doc.Layers
+                .Where(l => !l.IsDeleted)
+                .Where(l => includeHidden || l.IsVisible)
+                .ToList();
+
+            var layers = matched.Take(limit).Select(layer => (object)new Dictionary<string, object>
             {
-                if (!includeHidden && !layer.IsVisible) continue;
+                { "id", layer.Id.ToString() },
+                { "fullPath", ToolJson.Safe(layer.FullPath) },
+                { "visible", layer.IsVisible },
+                { "locked", layer.IsLocked },
+                { "objectCount", doc.Objects.FindByLayer(layer)?.Length ?? 0 },
+                { "colorHex", ColorHex(layer.Color) }
+            }).ToList();
 
-                layers.Add(new Dictionary<string, object>
-                {
-                    { "id", layer.Id.ToString() },
-                    { "fullPath", ToolJson.Safe(layer.FullPath) },
-                    { "visible", layer.IsVisible },
-                    { "locked", layer.IsLocked },
-                    { "objectCount", doc.Objects.FindByLayer(layer)?.Length ?? 0 },
-                    { "colorHex", ColorHex(layer.Color) }
-                });
+            var result = new Dictionary<string, object>
+            {
+                { "layers", layers },
+                { "totalLayers", matched.Count },
+                { "truncated", matched.Count > layers.Count }
+            };
+
+            if (matched.Count > layers.Count)
+            {
+                result["truncationNote"] =
+                    "omitted " + (matched.Count - layers.Count) + " of " + matched.Count +
+                    " layers — raise 'limit' if you need the rest.";
             }
 
-            return new Dictionary<string, object> { { "layers", layers } };
+            return result;
         }
 
         public static string ColorHex(System.Drawing.Color c) =>
@@ -165,7 +179,8 @@ namespace RhinoClaude.Services.Agent
             }
 
             var matched = query.ToList();
-            if (limit <= 0) limit = 200;
+            if (limit <= 0) limit = PayloadCaps.ListObjectsDefaultLimit;
+            if (limit > PayloadCaps.ListObjectsMaxLimit) limit = PayloadCaps.ListObjectsMaxLimit;
 
             var objects = matched.Take(limit).Select(o => new Dictionary<string, object>
             {
@@ -179,17 +194,32 @@ namespace RhinoClaude.Services.Agent
                     : tagService.GetAllTags(o).ToDictionary(kv => kv.Key, kv => ToolJson.Safe(kv.Value)) }
             }).ToList();
 
-            return new Dictionary<string, object>
+            var result = new Dictionary<string, object>
             {
                 { "objects", objects },
                 { "truncated", matched.Count > limit },
                 { "totalMatched", matched.Count }
             };
+
+            if (matched.Count > limit)
+            {
+                result["truncationNote"] =
+                    "showing the first " + limit + " of " + matched.Count +
+                    " matches — narrow the filters, or raise 'limit', if you need more.";
+            }
+
+            return result;
         }
 
         // ── get_object ────────────────────────────────────────────────
 
-        public object GetObject(string idText, bool includeSubobjects)
+        /// <summary>
+        /// <paramref name="facesRange"/> and <paramref name="edgesRange"/> are optional
+        /// inclusive <c>[start, end]</c> pairs. Both lists are capped either way — a Brep with
+        /// a few hundred faces would otherwise put ~19,000 tokens into the conversation from
+        /// one call, and then re-send them on every later iteration of the turn.
+        /// </summary>
+        public object GetObject(string idText, bool includeSubobjects, int[] facesRange, int[] edgesRange)
         {
             var doc = Doc;
             var obj = RequireObject(idText);
@@ -210,8 +240,13 @@ namespace RhinoClaude.Services.Agent
 
             if (includeSubobjects && obj.Geometry is Brep brep)
             {
-                result["faces"] = brep.Faces.Select((face, i) =>
+                var faceWindow = PayloadCaps.Resolve(brep.Faces.Count, facesRange, PayloadCaps.FacesPerCall);
+                var edgeWindow = PayloadCaps.Resolve(brep.Edges.Count, edgesRange, PayloadCaps.EdgesPerCall);
+
+                var faces = new List<object>(faceWindow.Count);
+                for (int i = faceWindow.Start; i <= faceWindow.End; i++)
                 {
+                    var face = brep.Faces[i];
                     var area = AreaMassProperties.Compute(face);
                     var centroid = area?.Centroid ?? face.GetBoundingBox(true).Center;
                     Vector3d normal = Vector3d.Unset;
@@ -219,24 +254,42 @@ namespace RhinoClaude.Services.Agent
                     if (face.ClosestPoint(centroid, out u, out v))
                         normal = face.NormalAt(u, v);
 
-                    return (object)new Dictionary<string, object>
+                    faces.Add(new Dictionary<string, object>
                     {
                         { "index", i },
                         { "area", area == null ? (object)null : Round(area.Area) },
                         { "centroid", Pt(centroid) },
                         { "normal", normal.IsValid ? Vec(normal) : null },
                         { "isPlanar", face.IsPlanar(doc.ModelAbsoluteTolerance) }
-                    };
-                }).ToList();
+                    });
+                }
 
-                result["edges"] = brep.Edges.Select((edge, i) => (object)new Dictionary<string, object>
+                var edges = new List<object>(edgeWindow.Count);
+                for (int i = edgeWindow.Start; i <= edgeWindow.End; i++)
                 {
-                    { "index", i },
-                    { "length", Round(edge.GetLength()) },
-                    { "startPoint", Pt(edge.PointAtStart) },
-                    { "endPoint", Pt(edge.PointAtEnd) },
-                    { "isLinear", edge.IsLinear(doc.ModelAbsoluteTolerance) }
-                }).ToList();
+                    var edge = brep.Edges[i];
+                    edges.Add(new Dictionary<string, object>
+                    {
+                        { "index", i },
+                        { "length", Round(edge.GetLength()) },
+                        { "startPoint", Pt(edge.PointAtStart) },
+                        { "endPoint", Pt(edge.PointAtEnd) },
+                        { "isLinear", edge.IsLinear(doc.ModelAbsoluteTolerance) }
+                    });
+                }
+
+                result["faces"] = faces;
+                result["edges"] = edges;
+                result["totalFaces"] = faceWindow.Total;
+                result["totalEdges"] = edgeWindow.Total;
+                result["facesReturned"] = faceWindow.AsRange();
+                result["edgesReturned"] = edgeWindow.AsRange();
+                result["truncated"] = faceWindow.Truncated || edgeWindow.Truncated;
+
+                string note = PayloadCaps.CombineNotes(
+                    PayloadCaps.NoteFor("faces", "facesRange", faceWindow, PayloadCaps.FacesPerCall),
+                    PayloadCaps.NoteFor("edges", "edgesRange", edgeWindow, PayloadCaps.EdgesPerCall));
+                if (note != null) result["truncationNote"] = note;
             }
 
             return result;
@@ -354,10 +407,14 @@ namespace RhinoClaude.Services.Agent
         {
             var doc = Doc;
             var blocks = new List<object>();
+            int total = 0;
 
             foreach (var definition in doc.InstanceDefinitions)
             {
                 if (definition == null || definition.IsDeleted) continue;
+                total++;
+                if (blocks.Count >= PayloadCaps.ListBlocksDefaultLimit) continue;
+
                 blocks.Add(new Dictionary<string, object>
                 {
                     { "name", ToolJson.Safe(definition.Name) },
@@ -367,7 +424,12 @@ namespace RhinoClaude.Services.Agent
                 });
             }
 
-            return new Dictionary<string, object> { { "blocks", blocks } };
+            return new Dictionary<string, object>
+            {
+                { "blocks", blocks },
+                { "totalBlocks", total },
+                { "truncated", total > blocks.Count }
+            };
         }
 
         /// <summary>Union bbox of a set of ids — used to frame view captures on the work area.</summary>

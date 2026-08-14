@@ -429,17 +429,28 @@ namespace RhinoClaude.Services.Semantic
                 ? geometry.Faces
                 : FaceSelectorResolver.Filter(geometry.Faces, selector).ToList();
 
+            // Largest first, then capped: on a dense mass the tail is slivers, and everything
+            // returned here is re-sent on every later iteration of the turn.
+            var ranked = faces.OrderByDescending(f => f.Area).ToList();
+            var shown = ranked.Take(PayloadCaps.FacesPerCall).ToList();
+
             return new Dictionary<string, object>
             {
                 { "massId", mass.ElementId },
                 { "massName", ToolJson.Safe(mass.Name) },
-                { "faces", faces.OrderByDescending(f => f.Area).Select(FaceSummary).ToList() },
+                { "faces", shown.Select(FaceSummary).ToList() },
                 { "faceCount", geometry.Faces.Count },
+                { "matchedFaceCount", ranked.Count },
+                { "truncated", ranked.Count > shown.Count },
                 { "unclassifiedFaceArea", Round(geometry.UnclassifiedFaceArea) },
                 { "notes", faces.Count == 0 && !selector.IsEmpty
                     ? "No face matched that filter. This mass has orientations [" +
                       string.Join(", ", geometry.Faces.Select(f => f.Orientation).Distinct()) + "]."
-                    : string.Join(" ", geometry.Notes) }
+                    : string.Join(" ", geometry.Notes) +
+                      (ranked.Count > shown.Count
+                        ? " Showing the " + shown.Count + " largest of " + ranked.Count +
+                          " matching faces; filter by role or orientation to see the rest."
+                        : string.Empty) }
             };
         }
 
@@ -483,15 +494,30 @@ namespace RhinoClaude.Services.Semantic
                 ? geometry.Edges.Where(e => e.Role != SemanticVocabulary.EdgeOther)
                 : geometry.Edges.Where(e => e.Role == role);
 
+            // Longest first, then capped — same reasoning as GetMassFaces.
+            var ranked = edges.OrderByDescending(e => e.Length).ToList();
+            var shown = ranked.Take(PayloadCaps.EdgesPerCall).ToList();
+
+            var notes = new List<string>();
+            if (role == null)
+            {
+                notes.Add("Edges with role 'other' are omitted; there are " +
+                          geometry.Edges.Count(e => e.Role == SemanticVocabulary.EdgeOther) + " of them.");
+            }
+            if (ranked.Count > shown.Count)
+            {
+                notes.Add("Showing the " + shown.Count + " longest of " + ranked.Count +
+                          " matching edges; filter by role to see the rest.");
+            }
+
             return new Dictionary<string, object>
             {
                 { "massId", mass.ElementId },
-                { "edges", edges.OrderByDescending(e => e.Length).Select(EdgeSummary).ToList() },
+                { "edges", shown.Select(EdgeSummary).ToList() },
                 { "totalEdgeCount", geometry.Edges.Count },
-                { "notes", role == null
-                    ? "Edges with role 'other' are omitted; there are " +
-                      geometry.Edges.Count(e => e.Role == SemanticVocabulary.EdgeOther) + " of them."
-                    : null }
+                { "matchedEdgeCount", ranked.Count },
+                { "truncated", ranked.Count > shown.Count },
+                { "notes", notes.Count == 0 ? null : string.Join(" ", notes) }
             };
         }
 

@@ -38,9 +38,9 @@ namespace RhinoClaude.Agent
     {
         /// <summary>Cache writes bill at 1.25x the input rate (the 5-minute TTL).</summary>
         /// <remarks>
-        /// The 1-hour TTL is 2x instead. Nothing in the plugin sets <c>cache_control</c>, so
-        /// both cache pools are always zero today; revisit this constant if caching is added
-        /// with a 1h TTL.
+        /// The 1-hour TTL is 2x instead. <see cref="PromptCache"/> only ever sets the default
+        /// 5-minute TTL, so 1.25x is the right multiplier; revisit this constant if a 1h TTL
+        /// is ever used.
         /// </remarks>
         public const double CacheWriteMultiplier = 1.25;
 
@@ -75,6 +75,8 @@ namespace RhinoClaude.Agent
                                                    introThroughUtc: new DateTime(2026, 8, 31)),
             Rate("claude-opus-4",     5.00, 25.00),
             Rate("claude-opus-5",     5.00, 25.00),
+            // The default loop model, so these are the rates almost every turn is billed at.
+            // List price with no promotional period — cache write $1.25, cache read $0.10.
             Rate("claude-haiku-4-5",  1.00,  5.00),
             Rate("claude-fable-5",   10.00, 50.00),
         };
