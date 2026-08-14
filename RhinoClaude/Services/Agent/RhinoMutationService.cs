@@ -54,6 +54,24 @@ namespace RhinoClaude.Services.Agent
             }
         }
 
+        /// <summary>
+        /// Run a composite mutation — several document edits that must undo as one move —
+        /// inside a single undo record, with the same id-delta bookkeeping every other tool
+        /// gets.
+        ///
+        /// This is what the semantic write tools use. A semantic move like cut_opening is a
+        /// cutter solid, a boolean, a tag and a delete; running each through its own public
+        /// method here would leave four undo records for one architectural action, and the
+        /// user would have to press undo four times to take back one window. Keeping the
+        /// wrapper in this class is also what stops a second, parallel mutation pipeline from
+        /// growing next to this one.
+        /// </summary>
+        public T RunComposite<T>(string toolName, Func<RhinoDoc, T> body)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            return InUndoRecord(toolName, body);
+        }
+
         private static HashSet<Guid> SnapshotIds(RhinoDoc doc)
         {
             var ids = new HashSet<Guid>();

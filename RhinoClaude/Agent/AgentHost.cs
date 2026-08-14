@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Rhino;
 using RhinoClaude.Services.Agent;
+using RhinoClaude.Services.Semantic;
 using RhinoClaude.Tools;
 
 namespace RhinoClaude.Agent
@@ -33,7 +34,11 @@ namespace RhinoClaude.Agent
 
         public static void Forget(uint documentSerialNumber)
         {
-            lock (Gate) Hosts.Remove(documentSerialNumber);
+            lock (Gate)
+            {
+                if (Hosts.TryGetValue(documentSerialNumber, out var host)) host.Release();
+                Hosts.Remove(documentSerialNumber);
+            }
         }
 
         private AgentHost(RhinoDoc doc)
@@ -49,6 +54,19 @@ namespace RhinoClaude.Agent
 
             ScriptLog = new JsonlLogger(Settings.ScriptLogPath);
             CaptureLog = new JsonlLogger(Settings.CaptureLogPath);
+            ClassifierLog = new JsonlLogger(Settings.ClassifierLogPath);
+
+            // The semantic layer sits on top of the phase 1 services, never beside them: its
+            // mutations go through RhinoMutationService so undo and session-revert stay
+            // consistent, and its reads go through the registry's two-tier cache.
+            LayerConventions = new LayerConventionStore(doc, Settings);
+            LayerConventionStore.Restore(Settings);
+
+            History_Reader = new BooleanHistoryReader(doc);
+            Classifier = new SemanticClassifier(doc, LayerConventions);
+            GeometryAnalyzer = new MassGeometryAnalyzer(doc, History_Reader);
+            Elements = new ElementRegistry(doc, Classifier, GeometryAnalyzer, ClassifierLog);
+            SemanticQuery = new SemanticQueryService(doc, Elements);
 
             StartSession();
 
@@ -69,6 +87,17 @@ namespace RhinoClaude.Agent
         public SessionSnapshotService Snapshots { get; }
         public JsonlLogger ScriptLog { get; }
         public JsonlLogger CaptureLog { get; }
+        public JsonlLogger ClassifierLog { get; }
+
+        // ── Semantic layer ────────────────────────────────────────────
+
+        public LayerConventionStore LayerConventions { get; }
+        public SemanticClassifier Classifier { get; }
+        public MassGeometryAnalyzer GeometryAnalyzer { get; }
+        public BooleanHistoryReader History_Reader { get; }
+        public ElementRegistry Elements { get; }
+        public SemanticQueryService SemanticQuery { get; }
+        public SemanticMutationService SemanticMutation { get; private set; }
 
         public ViewCaptureService Capture { get; private set; }
         public ScriptExecutorService Script { get; private set; }
@@ -104,11 +133,12 @@ namespace RhinoClaude.Agent
             Registry = BuildRegistry();
 
             bool scriptEnabled = Settings.EnableScriptTool;
+            bool semanticEnabled = Settings.EnableSemanticTools;
             Session = new AgentSession(
                 client,
                 Registry,
                 Settings,
-                () => SystemPrompt.Build(scriptEnabled));
+                () => SystemPrompt.Build(scriptEnabled, semanticEnabled));
 
             WireReview(Session);
 
@@ -182,6 +212,17 @@ namespace RhinoClaude.Agent
             registry.RegisterAll(Tier1Tools.Build(
                 Query, Mutation, Interaction,
                 Settings.EnableRhinoCommandTool ? Command : null));
+
+            // Semantic tools register after the raw ones, so the raw block stays byte-identical
+            // in the prompt whether or not the semantic layer is on — the cached prefix survives
+            // a settings change.
+            if (Settings.EnableSemanticTools)
+            {
+                SemanticMutation = new SemanticMutationService(Query, Mutation, Elements);
+                registry.RegisterAll(SemanticReadTools.Build(SemanticQuery));
+                registry.RegisterAll(SemanticWriteTools.Build(SemanticMutation));
+            }
+
             return registry;
         }
 
@@ -194,5 +235,8 @@ namespace RhinoClaude.Agent
         /// <summary>True when the tool set changed and only a new session will pick it up.</summary>
         public bool ToolSetChangedSinceSessionStart(bool scriptEnabledAtStart) =>
             scriptEnabledAtStart != Settings.EnableScriptTool;
+
+        /// <summary>Release the registry's document-event subscriptions when the doc closes.</summary>
+        public void Release() => Elements?.Dispose();
     }
 }

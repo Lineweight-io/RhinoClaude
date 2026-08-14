@@ -70,9 +70,12 @@ namespace RhinoClaude.Services.Semantic
             }
 
             var faceRoleOverrides = ReadFaceRoleOverrides(obj);
+            var openingTags = ReadPositionTags(obj, "RhinoClaude:OpeningType@");
+            var entryTags = ReadPositionTags(obj, "RhinoClaude:Entry@");
             var interiorFaceIndices = FindInnerShellFaces(brep, units, view, mass);
 
-            BuildFaces(brep, mass, context, units, faceRoleOverrides, interiorFaceIndices, view);
+            BuildFaces(brep, mass, context, units, faceRoleOverrides, openingTags, entryTags,
+                       interiorFaceIndices, view);
             BuildEdges(brep, view);
             DetectRecesses(mass, units, view);
             DetectCantileverOverhangs(mass, units, view);
@@ -94,7 +97,8 @@ namespace RhinoClaude.Services.Semantic
 
         private void BuildFaces(
             Brep brep, MassView mass, SemanticView context, UnitContext units,
-            Dictionary<int, string> overrides, HashSet<int> interiorFaceIndices, MassGeometryView view)
+            Dictionary<int, string> overrides, List<PositionTag> openingTags, List<PositionTag> entryTags,
+            HashSet<int> interiorFaceIndices, MassGeometryView view)
         {
             double massBase = mass.Bbox != null && mass.Bbox.IsValid ? mass.Bbox.Min.Z : 0;
             var neighbours = (context?.Masses ?? new List<MassView>())
@@ -161,7 +165,7 @@ namespace RhinoClaude.Services.Semantic
                         "orientation. Tag " + SemanticVocabulary.FaceRoleKey(i) + " on the mass to label it by hand.");
                 }
 
-                DetectOpeningsInFace(face, faceView, units);
+                DetectOpeningsInFace(face, faceView, units, openingTags, entryTags);
                 view.Faces.Add(faceView);
             }
         }
@@ -257,9 +261,83 @@ namespace RhinoClaude.Services.Semantic
             return overrides;
         }
 
+        // ── Position-keyed tags ───────────────────────────────────────
+
+        /// <summary>A tag whose subject is a location rather than an object.</summary>
+        private sealed class PositionTag
+        {
+            public Vec3 Position;
+            public string Value;
+        }
+
+        /// <summary>
+        /// Openings are holes, and a hole has no Rhino object to hang a tag on. Face indices
+        /// are no better — the next boolean renumbers them. So <c>cut_opening</c> and
+        /// <c>promote_opening_to_entry</c> write their tags on the parent mass keyed by world
+        /// position, and this reads them back with a nearest match: the position survives
+        /// re-indexing, and later edits move a hole by inches, not by feet.
+        /// </summary>
+        private static List<PositionTag> ReadPositionTags(RhinoObject obj, string prefix)
+        {
+            var tags = new List<PositionTag>();
+            if (obj == null) return tags;
+
+            System.Collections.Specialized.NameValueCollection strings;
+            try
+            {
+                strings = obj.Attributes.GetUserStrings();
+            }
+            catch (Exception)
+            {
+                return tags;
+            }
+
+            if (strings == null) return tags;
+
+            foreach (string key in strings.AllKeys)
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var parts = key.Substring(prefix.Length).Split(',');
+                if (parts.Length != 3) continue;
+
+                if (!double.TryParse(parts[0], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double x)) continue;
+                if (!double.TryParse(parts[1], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double y)) continue;
+                if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double z)) continue;
+
+                tags.Add(new PositionTag { Position = new Vec3(x, y, z), Value = strings[key] });
+            }
+
+            return tags;
+        }
+
+        private static string NearestTag(List<PositionTag> tags, Vec3 position, double tolerance)
+        {
+            if (tags == null || tags.Count == 0) return null;
+
+            PositionTag best = null;
+            double bestDistance = tolerance;
+
+            foreach (var tag in tags)
+            {
+                double distance = tag.Position.DistanceTo(position);
+                if (distance > bestDistance) continue;
+                bestDistance = distance;
+                best = tag;
+            }
+
+            return best?.Value;
+        }
+
         // ── Openings from inner trim loops (plan §5.5) ────────────────
 
-        private static void DetectOpeningsInFace(BrepFace face, FaceView faceView, UnitContext units)
+        private static void DetectOpeningsInFace(
+            BrepFace face, FaceView faceView, UnitContext units,
+            List<PositionTag> openingTags, List<PositionTag> entryTags)
         {
             var faceBox = face.GetBoundingBox(true);
 
@@ -316,7 +394,18 @@ namespace RhinoClaude.Services.Semantic
                     Area = area
                 };
 
-                string type = OpeningClassifier.InferType(facts, units, out string note);
+                var centre = SemanticClassifier.ToVec(box.Center);
+
+                // An opening cut by cut_opening recorded the type the caller asked for, keyed by
+                // position — that beats inferring it back from the hole's dimensions.
+                string tagged = NearestTag(openingTags, centre, units.Length(2.0));
+                string type = tagged != null
+                    ? SemanticVocabulary.Normalize(tagged, SemanticVocabulary.OpeningTypes,
+                                                   SemanticVocabulary.OpeningWindow)
+                    : OpeningClassifier.InferType(facts, units, out _);
+
+                string note = null;
+                if (tagged == null) OpeningClassifier.InferType(facts, units, out note);
 
                 var opening = new OpeningView
                 {
@@ -329,11 +418,21 @@ namespace RhinoClaude.Services.Semantic
                     Height = height,
                     SillHeight = facts.SillHeight,
                     Area = area,
-                    Centroid = SemanticClassifier.ToVec(box.Center),
+                    Centroid = centre,
                     Origin = "subtracted",
-                    ClassifiedBy = SemanticVocabulary.ByGeometryInference,
+                    ClassifiedBy = tagged != null
+                        ? SemanticVocabulary.ByUserData
+                        : SemanticVocabulary.ByGeometryInference,
                     Name = type + " opening"
                 };
+
+                string entryType = NearestTag(entryTags, centre, units.Length(2.0));
+                if (entryType != null)
+                {
+                    opening.EntryType = SemanticVocabulary.Normalize(
+                        entryType, SemanticVocabulary.EntryTypes, "Main");
+                    opening.IsEntry = true;
+                }
 
                 var offset = opening.Centroid - faceView.Centroid;
                 opening.CentroidOnFace = new[]

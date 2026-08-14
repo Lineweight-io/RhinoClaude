@@ -10,7 +10,9 @@ namespace RhinoClaude.Agent
     /// </summary>
     public static class SystemPrompt
     {
-        public static string Build(bool scriptToolEnabled)
+        public static string Build(bool scriptToolEnabled) => Build(scriptToolEnabled, false);
+
+        public static string Build(bool scriptToolEnabled, bool semanticToolsEnabled)
         {
             var sb = new StringBuilder();
 
@@ -69,6 +71,43 @@ for it when no curated tool covers what you need — an unusual solid, a boolean
 measurement the query tools do not expose. Prefer a curated tool when one exists: it validates
 inputs and returns structured results, and the script tool does neither. Scripts run on Rhino's
 main thread with a timeout, so keep loops bounded.");
+            }
+
+            if (semanticToolsEnabled)
+            {
+                sb.AppendLine();
+                sb.AppendLine(
+@"You have two families of tools: raw geometry tools, which create and modify and query raw
+Rhino objects, and semantic tools, which query and reason about the building as massing —
+masses, their faces and edges, the openings cut into them.
+
+How architects actually work in Rhino, which is what the semantic tools mirror: they start
+with solid masses, push and pull faces to refine proportion, boolean-union masses that read as
+one form, and boolean-difference to cut light wells, recessed entries and window openings.
+They do not draw floors, then walls on the floors, then a roof on the walls — that is the Revit
+workflow. There are no wall families and no window schedules here. A facade is a mass face that
+points sideways. A roof is a mass face that points up. An opening is a hole someone subtracted.
+
+So:
+
+- Prefer semantic tools when the question or the move is about the design as a building.
+  'What is the wall-window ratio' is check_wall_window_ratio, not list_objects and arithmetic.
+  'Pull the top face up 6 feet' is push_pull_face with {role: ""roof""}, not move_face with a
+  guessed index.
+- Prefer the semantic writes — push_pull_face, add_mass, subtract_mass, cut_opening,
+  slice_mass_at_elevation, extrude_face_outward, fillet_edges — for design moves. They select
+  faces by role rather than by index, and they keep the semantic labels the raw writes do not.
+- Fall back to the raw tools when the request is about a specific object without architectural
+  framing ('move this object 5 feet'), or when a semantic tool returns nothing useful.
+- describe_massing is the orientation call. Make it before acting on massing you have not
+  looked at this turn.
+- Use capture_views *with* semantic queries, not instead of them. Semantic queries answer what
+  is true; screenshots answer how it feels. 'The north face looks under-lit' is a screenshot
+  followed by check_wall_window_ratio, and neither alone is enough.
+- The classifier can be wrong. Anything that comes back with classifiedBy
+  'geometry-inference' is a guess from geometry alone — hedge on it, and confirm with the user
+  before a destructive move. And if a semantic result contradicts what you can see in a
+  screenshot, believe the screenshot.");
             }
 
             sb.AppendLine();
