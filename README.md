@@ -5,9 +5,12 @@ sidebar; Claude inspects the model, creates and edits geometry through a curated
 looks at what it built, and reports back — all inside a single undo group you can revert with
 one click.
 
-> **Status:** the streaming tool-use loop, the sidebar, the full 38-tool Tier 1 set, multi-shot
-> view capture, the Roslyn C# escape hatch and self-review are all in. `run_rhino_command` and
-> conversation persistence come next. See `AGENT_REFACTOR_PLAN.md`.
+> **Status: code-complete against `AGENT_REFACTOR_PLAN.md`** — every phase 0 through 10 is
+> implemented. Both target frameworks build with no warnings and 151 unit tests pass.
+>
+> **Nothing Rhino-facing has been run inside Rhino yet.** RhinoCommon is a compile-only
+> reference, so no test here touches a real document. See **`TESTING.md`** for the smoke-test
+> script to run first.
 
 ## Features
 
@@ -26,10 +29,14 @@ one click.
   to 6 shots returned from one call.
 - **C# escape hatch** — `run_rhinocommon_script` runs a snippet with full RhinoCommon access
   inside an isolated undo record, with a timeout, a static-analysis blocklist, and a JSONL log.
+- **Self-review** — `signal_done` triggers deterministic checks plus a multi-shot look at the
+  model, judged by a separate tool-less call on Opus 5. See below.
+- **Conversation persistence** — the conversation is stored in the `.3dm` itself, so reopening
+  a file offers to resume where you left off.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tier 1 tools (38)
+### Tools (39)
 
 | Group | Tools |
 |---|---|
@@ -42,10 +49,16 @@ one click.
 | Material | `assign_material` |
 | Selection / view | `select_objects`, `deselect_all`, `zoom_extents`, `capture_views` |
 | Tier 2 | `run_rhinocommon_script` |
+| Tier 3 | `run_rhino_command` — **off by default**, see settings |
 | Meta | `set_object_tags`, `signal_done` |
 
 `delete_objects` is an addition to the plan's inventory — without it an agent that mis-creates
 geometry cannot clean up after itself.
+
+`run_rhino_command` defaults off. The plan includes it but calls it a last resort: scripted
+commands are non-atomic and undo poorly, and the curated tools plus the C# hatch cover nearly
+everything. A blocklist rejects `_Exit`, `_New`, `_Open`, `_Close`, `_SaveAs`, `_Options` and the
+script editors before execution, and the first use in a session raises a notice in the panel.
 
 Selection and viewport tools live in `RhinoInteractionService`, deliberately apart from the
 mutation service: Rhino does not put selection or camera changes on the undo stack, so wrapping
@@ -78,6 +91,9 @@ RhinoClaude.sln
 │   │   ├── JsonlLogger.cs
 │   │   ├── ReviewModels.cs          #   review prompt + verdict parsing
 │   │   ├── SessionMutationLog.cs    #   what the agent actually changed
+│   │   ├── HistoryCompactor.cs      #   shrink old tool results (risk #6)
+│   │   ├── ConversationSnapshot.cs  #   persisted conversation format
+│   │   ├── ModelCapabilities.cs     #   per-model request shaping
 │   │   └── AgentHost.cs             #   per-document object graph
 │   ├── Services/Agent/              # everything that touches RhinoCommon
 │   │   ├── RhinoQueryService.cs     #   read-only document access
@@ -86,7 +102,9 @@ RhinoClaude.sln
 │   │   ├── ScriptExecutorService.cs #   Roslyn C# escape hatch
 │   │   ├── SessionSnapshotService.cs#   session undo log + revert
 │   │   ├── RhinoInteractionService.cs # selection + viewport (no undo record)
-│   │   └── SelfReviewService.cs     #   deterministic checks + reviewer call
+│   │   ├── SelfReviewService.cs     #   deterministic checks + reviewer call
+│   │   ├── AgentConversationStore.cs#   conversation storage in the .3dm
+│   │   └── RhinoCommandService.cs   #   Tier 3 scripted commands
 │   ├── Tools/                       # tool schemas + handler wiring
 │   │   ├── Phase1Tools.cs           #   query, create, transform, capture, script, done
 │   │   └── Tier1Tools.cs            #   the rest of the plan §3 inventory
@@ -277,17 +295,22 @@ document; a broken second opinion must not strand it.
 
 ## Testing
 
-Everything Rhino-facing is unverified — see `TESTING.md` for the smoke-test script.
+**`TESTING.md` is the smoke-test script — run it first.** It walks the whole surface in the
+order that finds problems fastest: one turn that exercises streaming, the tool loop and
+UI-thread marshalling together, then undo/revert, then vision, the script hatch, self-review,
+persistence and the guardrails. It also separates expected-and-harmless failures from real ones.
 
-## Not built yet
+Unit tests cover what can be tested without Rhino — the SSE parser, delta assembly, content-block
+round-trips, model-capability request shaping, cost accounting, undo-scope correctness against a
+fake recorder, review parsing, compaction, persistence, and the conversation invariants the API
+enforces. **Everything that touches RhinoCommon is unverified**: geometry results, camera
+control, and undo behaviour all need a live session before they should be trusted.
 
-Nothing from `AGENT_REFACTOR_PLAN.md` §9 — phases 0 through 10 are all implemented. What
-remains is verification inside Rhino, and whatever the script log suggests promoting to Tier 1.
+## What's left
 
-**Nothing in the Rhino-facing layer has been exercised inside Rhino yet** — it compiles against
-RhinoCommon, and the protocol layer is unit-tested, but RhinoCommon is a compile-only reference
-so no test here touches a real document. Geometry results, camera control and undo behaviour all
-need a session in Rhino before they should be trusted.
+Nothing from `AGENT_REFACTOR_PLAN.md` §9 — phases 0 through 10 are all implemented. What remains
+is verification inside Rhino, and then whatever `script_log.jsonl` says deserves promotion from
+the Tier 2 escape hatch into a curated Tier 1 tool.
 
 ## License
 
