@@ -113,6 +113,12 @@ Rhino copies the `.rhp` into its own plugin folder on install, so rebuilding doe
 automatically update an installed copy — re-drag after a rebuild, or point Rhino at the build
 output directly.
 
+> **The `.rhp` is not self-contained.** It needs the sibling DLLs in `bin/Build` —
+> System.Text.Json and, since phase 1, Roslyn (`Microsoft.CodeAnalysis.*`, ~13 MB, larger than
+> the plan's 5 MB estimate). Those are gitignored, so a fresh clone must run `dotnet build`
+> before the committed `.rhp` will load. The `.rhp` is tracked only so a machine without the
+> toolchain still has the last known build to look at.
+
 ## Setup
 
 ```
