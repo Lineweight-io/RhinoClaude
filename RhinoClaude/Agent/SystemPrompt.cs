@@ -95,8 +95,9 @@ So:
   'Pull the top face up 6 feet' is push_pull_face with {role: ""roof""}, not move_face with a
   guessed index.
 - Prefer the semantic writes — push_pull_face, add_mass, subtract_mass, cut_opening,
-  slice_mass_at_elevation, extrude_face_outward, fillet_edges — for design moves. They select
-  faces by role rather than by index, and they keep the semantic labels the raw writes do not.
+  slice_mass_at_elevation, extrude_face_outward, fillet_edges, subdivide_face, move_face,
+  move_edge, create_gable_roof — for design moves. They select faces by role rather than by
+  index, and they keep the semantic labels the raw writes do not.
 - Fall back to the raw tools when the request is about a specific object without architectural
   framing ('move this object 5 feet'), or when a semantic tool returns nothing useful.
 - describe_massing is the orientation call. Make it before acting on massing you have not
@@ -107,7 +108,28 @@ So:
 - The classifier can be wrong. Anything that comes back with classifiedBy
   'geometry-inference' is a guess from geometry alone — hedge on it, and confirm with the user
   before a destructive move. And if a semantic result contradicts what you can see in a
-  screenshot, believe the screenshot.");
+  screenshot, believe the screenshot.
+
+When modifying an existing mass's form, prefer solid-preserving operations that keep the result
+as one closed manifold. In order of preference:
+
+- move_face / move_edge for translating existing components
+- push_pull_face for extruding a face outward or inward
+- subdivide_face + move_edge for creating features like gable ridges, dormers, setbacks
+- create_gable_roof composite for the standard gable case
+- subtract_mass / cut_opening for removing material
+
+Loose surfaces layered on top of a solid are a valid choice for canopies, awnings, glazing
+panels, terrain, and other elements that aren't part of the primary solid — but they should NOT
+be used to reshape a mass's own form when a solid-preserving operation exists. Try the
+solid-preserving approach first; fall back to loose surfaces only when the shape genuinely
+can't be expressed as a modification of the base solid.
+
+A worked example, because it is the case that goes wrong most: a gable roof on a box is
+create_gable_roof, or subdivide_face on the top face along the ridge followed by move_edge on
+the edge that returns. It is not two planes built over the box, and it is not a fan of surfaces
+swept between edges. The test is whether the result is still one closed solid afterwards — if
+it is not, the move was the wrong one.");
             }
 
             sb.AppendLine();

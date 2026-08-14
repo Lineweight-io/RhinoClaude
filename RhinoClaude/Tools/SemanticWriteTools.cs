@@ -8,7 +8,9 @@ using RhinoClaude.Services.Semantic;
 namespace RhinoClaude.Tools
 {
     /// <summary>
-    /// The massing operations (semantic plan §4.6) — seven writes plus the Entry promotion.
+    /// The massing operations (semantic plan §4.6) — seven writes plus the Entry promotion,
+    /// and the four solid-preserving moves added after the gable test: subdivide_face,
+    /// move_face, move_edge and the create_gable_roof composite.
     ///
     /// These are the plan's core claim about what the agent is for: mass modelling *is* the SD
     /// workflow, so the agent has to be able to make the same moves the architect makes. Each
@@ -27,7 +29,16 @@ namespace RhinoClaude.Tools
                 SliceMassAtElevation(mutation),
                 ExtrudeFaceOutward(mutation),
                 FilletEdges(mutation),
-                PromoteOpeningToEntry(mutation)
+                PromoteOpeningToEntry(mutation),
+
+                // The solid-preserving set. move_face and move_edge deliberately keep the raw
+                // tools' names: they take the semantic {massId, selector} shape *and* the raw
+                // {brepId, index} one, so registering them last replaces the Tier 1 pair with a
+                // superset rather than leaving the agent two tools with the same job.
+                SubdivideFace(mutation),
+                MoveFace(mutation),
+                MoveEdge(mutation),
+                CreateGableRoof(mutation)
             };
         }
 
@@ -265,6 +276,199 @@ namespace RhinoClaude.Tools
                     ToolInput.RequireString(input, "massId"),
                     selectors,
                     ToolInput.RequireDouble(input, "radius")));
+            }
+        };
+
+        // ── Solid-preserving moves ────────────────────────────────────
+
+        /// <summary>Named axes plus the two face-relative words, shared by move_face and move_edge.</summary>
+        private const string DirectionSchema = @"{
+      ""type"": ""string"",
+      ""description"": ""A named direction: +x, -x, +y, -y, +z, -z, up, down, north, south, east, west — or, on move_face only, outward/inward along the face's own normal. Use directionVector instead for anything off-axis."",
+      ""enum"": [""+x"",""-x"",""+y"",""-y"",""+z"",""-z"",""up"",""down"",""north"",""south"",""east"",""west"",""outward"",""inward""]
+    }";
+
+        private const string DirectionVectorSchema = @"{
+      ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 3, ""maxItems"": 3,
+      ""description"": ""[x, y, z]. Normalised before use, so only its direction matters.""
+    }";
+
+        private static ToolDefinition SubdivideFace(SemanticMutationService mutation) => new ToolDefinition
+        {
+            Name = "subdivide_face",
+            Description =
+                "Divide one face of a solid in two, keeping the solid closed. This is the move behind every " +
+                "feature that reshapes a mass rather than sitting on top of it: a gable ridge, a dormer, a " +
+                "stepped setback, a sloped roof. Split the face, then move_edge the edge the split created — " +
+                "the response returns its id ready to pass straight through. Cut it three ways: a line " +
+                "between two points in plan, an existing curve in the document, or a proportional split " +
+                "along the face's own axes (0.5 is the midline). The line is extended to the face's edges " +
+                "automatically, but it does have to cross the face — one that stops inside it divides nothing.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""massId"", ""faceSelector"", ""cut""],
+  ""properties"": {
+    ""massId"": { ""type"": ""string"" },
+    ""faceSelector"": " + SemanticReadTools.FaceSelectorSchema + @",
+    ""cut"": {
+      ""type"": ""object"",
+      ""description"": ""How to divide the face. Exactly one of: {line}, {cuttingCurveId}, or {splitRatio, direction}."",
+      ""properties"": {
+        ""line"": {
+          ""type"": ""object"",
+          ""description"": ""Two points the cut runs between. Projected onto the face along its normal, so on a roof the z is optional."",
+          ""properties"": {
+            ""startPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
+            ""endPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
+          },
+          ""additionalProperties"": false
+        },
+        ""cuttingCurveId"": { ""type"": ""string"", ""description"": ""An existing curve, projected onto the face before it cuts."" },
+        ""splitRatio"": { ""type"": ""number"", ""description"": ""Strictly between 0 and 1. 0.5 is the midline."" },
+        ""direction"": { ""type"": ""string"", ""enum"": [""u"", ""v""], ""default"": ""u"", ""description"": ""Which of the face's own axes splitRatio runs along. On a roof, u is east-west and v is north-south."" }
+      },
+      ""additionalProperties"": false
+    }
+  },
+  ""additionalProperties"": false
+}",
+            Handler = (input, ct) => ToolResult.Ok(mutation.SubdivideFace(
+                ToolInput.RequireString(input, "massId"),
+                FaceSelector.Parse(ToolInput.Require(input, "faceSelector")),
+                FaceCut.Parse(ToolInput.Require(input, "cut"))))
+        };
+
+        private static ToolDefinition MoveFace(SemanticMutationService mutation) => new ToolDefinition
+        {
+            Name = "move_face",
+            Description =
+                "Translate a whole face of a solid and let the faces around it follow — how an existing mass " +
+                "gets taller, wider or set back without being rebuilt, and without ever ceasing to be one " +
+                "closed solid. Pick the face by role or orientation with faceSelector on a mass; the raw " +
+                "form, brepId plus faceIndex, still works on any Brep in the document. Moving along the " +
+                "face's own normal is push_pull_face's job, but 'outward' and 'inward' do the same thing here.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""distance""],
+  ""properties"": {
+    ""massId"": { ""type"": ""string"", ""description"": ""The mass to edit. Use with faceSelector."" },
+    ""faceSelector"": " + SemanticReadTools.FaceSelectorSchema + @",
+    ""brepId"": { ""type"": ""string"", ""description"": ""Raw form: any Brep in the document. Use with faceIndex."" },
+    ""faceIndex"": { ""type"": ""integer"", ""minimum"": 0, ""description"": ""Raw form: face index from get_object with includeSubobjects."" },
+    ""direction"": " + DirectionSchema + @",
+    ""directionVector"": " + DirectionVectorSchema + @",
+    ""distance"": { ""type"": ""number"", ""description"": ""Model units along the direction. Negative reverses it."" }
+  },
+  ""additionalProperties"": false
+}",
+            Handler = (input, ct) =>
+            {
+                string massId = ToolInput.String(input, "massId");
+                string brepId = ToolInput.String(input, "brepId");
+
+                if (string.IsNullOrWhiteSpace(massId) && !string.IsNullOrWhiteSpace(brepId))
+                    return ToolResult.Ok(mutation.MoveSubObjectRaw(
+                        true, brepId, ToolInput.Int(input, "faceIndex", -1),
+                        ToolInput.String(input, "direction"),
+                        ToolInput.DoubleList(input, "directionVector").ToArray(),
+                        ToolInput.RequireDouble(input, "distance")));
+
+                return ToolResult.Ok(mutation.MoveFace(
+                    ToolInput.RequireString(input, "massId"),
+                    FaceSelector.Parse(ToolInput.Require(input, "faceSelector")),
+                    ToolInput.String(input, "direction"),
+                    ToolInput.DoubleList(input, "directionVector").ToArray(),
+                    ToolInput.RequireDouble(input, "distance")));
+            }
+        };
+
+        private static ToolDefinition MoveEdge(SemanticMutationService mutation) => new ToolDefinition
+        {
+            Name = "move_edge",
+            Description =
+                "Translate one edge of a solid, letting the faces that meet it stretch to follow. This is the " +
+                "second half of a gable: subdivide_face the roof along the ridge, then lift the edge that " +
+                "created. Pass an edgeId straight from subdivide_face's newEdgeIds, or pick one by role — " +
+                "'roof-ridge', 'parapet', 'eave'. The raw form, brepId plus edgeIndex, still works on any Brep.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""distance""],
+  ""properties"": {
+    ""massId"": { ""type"": ""string"", ""description"": ""The mass to edit. Use with edgeSelector."" },
+    ""edgeSelector"": {
+      ""type"": ""object"",
+      ""description"": ""How to pick the edge. One of {edgeId} — including one returned by subdivide_face — {edgeIndex}, or {role}."",
+      ""properties"": {
+        ""edgeId"": { ""type"": ""string"" },
+        ""edgeIndex"": { ""type"": ""integer"" },
+        ""role"": { ""type"": ""string"", ""enum"": [""parapet"",""outside-corner"",""inside-corner"",""roof-ridge"",""eave"",""other""] }
+      },
+      ""additionalProperties"": false
+    },
+    ""brepId"": { ""type"": ""string"", ""description"": ""Raw form: any Brep in the document. Use with edgeIndex."" },
+    ""edgeIndex"": { ""type"": ""integer"", ""minimum"": 0, ""description"": ""Raw form: edge index from get_object with includeSubobjects."" },
+    ""direction"": " + DirectionSchema + @",
+    ""directionVector"": " + DirectionVectorSchema + @",
+    ""distance"": { ""type"": ""number"" }
+  },
+  ""additionalProperties"": false
+}",
+            Handler = (input, ct) =>
+            {
+                string massId = ToolInput.String(input, "massId");
+                string brepId = ToolInput.String(input, "brepId");
+
+                if (string.IsNullOrWhiteSpace(massId) && !string.IsNullOrWhiteSpace(brepId))
+                    return ToolResult.Ok(mutation.MoveSubObjectRaw(
+                        false, brepId, ToolInput.Int(input, "edgeIndex", -1),
+                        ToolInput.String(input, "direction"),
+                        ToolInput.DoubleList(input, "directionVector").ToArray(),
+                        ToolInput.RequireDouble(input, "distance")));
+
+                return ToolResult.Ok(mutation.MoveEdge(
+                    ToolInput.RequireString(input, "massId"),
+                    EdgeSelector.Parse(ToolInput.Require(input, "edgeSelector")),
+                    ToolInput.String(input, "direction"),
+                    ToolInput.DoubleList(input, "directionVector").ToArray(),
+                    ToolInput.RequireDouble(input, "distance")));
+            }
+        };
+
+        private static ToolDefinition CreateGableRoof(SemanticMutationService mutation) => new ToolDefinition
+        {
+            Name = "create_gable_roof",
+            Description =
+                "Turn a flat-topped mass into a gable in one move: the top face is split along the ridge line " +
+                "and the new edge is raised by pitchHeight, leaving one closed solid rather than two planes " +
+                "resting on a box. Give the ridge as two points in plan — for a rectangular footprint that is " +
+                "usually the midline of the long direction, running the full length. The ridge has to cross " +
+                "the roof; if it does not, nothing is changed and the error says where the roof actually is. " +
+                "For anything more elaborate — a hip, a dormer, a monopitch — compose subdivide_face and " +
+                "move_edge yourself.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""massId"", ""ridgeLineStart"", ""ridgeLineEnd"", ""pitchHeight""],
+  ""properties"": {
+    ""massId"": { ""type"": ""string"" },
+    ""ridgeLineStart"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3, ""description"": ""[x, y] in plan; z is ignored — the line is projected onto the top face."" },
+    ""ridgeLineEnd"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
+    ""pitchHeight"": { ""type"": ""number"", ""description"": ""How far the ridge rises above the existing top face, in model units."" },
+    ""faceSelector"": " + SemanticReadTools.FaceSelectorSchema + @"
+  },
+  ""additionalProperties"": false
+}",
+            Handler = (input, ct) =>
+            {
+                var selector = ToolInput.TryGet(input, "faceSelector", out var face)
+                    ? FaceSelector.Parse(face)
+                    : null;
+
+                return ToolResult.Ok(mutation.CreateGableRoof(
+                    ToolInput.RequireString(input, "massId"),
+                    ToolInput.DoubleList(input, "ridgeLineStart").ToArray(),
+                    ToolInput.DoubleList(input, "ridgeLineEnd").ToArray(),
+                    ToolInput.RequireDouble(input, "pitchHeight"),
+                    selector));
             }
         };
 

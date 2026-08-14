@@ -25,7 +25,7 @@ namespace RhinoClaude.Services.Semantic
     /// boolean, and handing the agent a stale face id is how a second edit lands in the wrong
     /// place. UI-thread only.
     /// </summary>
-    public sealed class SemanticMutationService
+    public sealed partial class SemanticMutationService
     {
         private readonly RhinoQueryService _query;
         private readonly RhinoMutationService _mutation;

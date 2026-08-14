@@ -127,6 +127,7 @@ namespace RhinoClaude.Services.Semantic
                     IsPlanar = isPlanar,
                     ElevationMin = box.IsValid ? box.Min.Z : 0,
                     ElevationMax = box.IsValid ? box.Max.Z : 0,
+                    Bbox = SemanticClassifier.ToBox(box),
                     SurfaceType = SurfaceTypeOf(face, units)
                 };
 
