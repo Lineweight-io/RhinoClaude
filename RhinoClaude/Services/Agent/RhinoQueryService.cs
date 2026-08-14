@@ -95,10 +95,8 @@ namespace RhinoClaude.Services.Agent
                 { "units", doc.ModelUnitSystem.ToString() },
                 { "tolerance", Round(doc.ModelAbsoluteTolerance) },
                 { "angleToleranceDegrees", Round(doc.ModelAngleToleranceDegrees) },
-                // .Where(...).Count() rather than .Count(predicate): LayerTable and ObjectTable
-                // both expose a non-invocable Count property that shadows the LINQ overload.
-                { "layerCount", doc.Layers.Where(l => !l.IsDeleted).Count() },
-                { "objectCount", doc.Objects.Where(o => !o.IsDeleted).Count() },
+                { "layerCount", doc.Layers.Count(l => !l.IsDeleted) },
+                { "objectCount", doc.Objects.Count(o => !o.IsDeleted) },
                 { "selectionCount", doc.Objects.GetSelectedObjects(false, false).Count() },
                 { "activeViewName", viewport == null ? null : ToolJson.Safe(viewport.Name) },
                 { "activeViewCameraLocation", viewport == null ? null : Pt(viewport.CameraLocation) },

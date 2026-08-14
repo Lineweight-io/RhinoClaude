@@ -275,10 +275,14 @@ against the same per-turn budget but priced on its own model.
 nonsense — reports `unavailable` and the turn ends normally. The geometry is already in the
 document; a broken second opinion must not strand it.
 
+## Testing
+
+Everything Rhino-facing is unverified — see `TESTING.md` for the smoke-test script.
+
 ## Not built yet
 
-`run_rhino_command` (Tier 3, plan §4.7) and per-document conversation persistence
-(`AgentConversationStore`, §2.2). See `AGENT_REFACTOR_PLAN.md` §9 for the phase order.
+Nothing from `AGENT_REFACTOR_PLAN.md` §9 — phases 0 through 10 are all implemented. What
+remains is verification inside Rhino, and whatever the script log suggests promoting to Tier 1.
 
 **Nothing in the Rhino-facing layer has been exercised inside Rhino yet** — it compiles against
 RhinoCommon, and the protocol layer is unit-tested, but RhinoCommon is a compile-only reference

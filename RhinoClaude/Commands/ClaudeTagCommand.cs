@@ -225,6 +225,17 @@ namespace RhinoClaude.Commands
             sb.AppendLine("- Only include tags that the description provides information for. Do NOT guess.");
             sb.AppendLine("- If the description mentions materials/layers, set RC:MaterialLayers as a comma-separated list.");
             sb.AppendLine();
+
+            // Plan phase 9: the document summary comes from SceneContextCollector rather than
+            // being re-serialized inline here. One line of context is enough for a tagging
+            // call — the agent loop is where a full scene read belongs.
+            var doc = objects.Count > 0 ? objects[0].Document : null;
+            if (doc != null)
+            {
+                sb.AppendLine(SceneContextCollector.CollectBriefContext(doc));
+                sb.AppendLine();
+            }
+
             sb.AppendLine(string.Format("Selected: {0} object(s)", objects.Count));
 
             // Include brief info about the selected objects
