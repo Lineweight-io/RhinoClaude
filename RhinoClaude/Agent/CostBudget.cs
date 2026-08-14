@@ -38,9 +38,9 @@ namespace RhinoClaude.Agent
     {
         /// <summary>Cache writes bill at 1.25x the input rate (the 5-minute TTL).</summary>
         /// <remarks>
-        /// The 1-hour TTL is 2x instead. Nothing in the plugin sets <c>cache_control</c>, so
-        /// both cache pools are always zero today; revisit this constant if caching is added
-        /// with a 1h TTL.
+        /// The 1-hour TTL is 2x instead. <see cref="PromptCache"/> only ever sets the default
+        /// 5-minute TTL, so 1.25x is the right multiplier; revisit this constant if a 1h TTL
+        /// is ever used.
         /// </remarks>
         public const double CacheWriteMultiplier = 1.25;
 

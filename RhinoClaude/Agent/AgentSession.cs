@@ -147,6 +147,11 @@ namespace RhinoClaude.Agent
         /// <summary>
         /// Shrink old tool results (plan §2.4). Called after a turn ships rather than mid-turn,
         /// so the model never sees its own context change underneath it.
+        ///
+        /// Rewriting old results does invalidate the cached prefix, so the first request of the
+        /// next turn pays a cold write. That is a fair trade — the rewrite is what stops the
+        /// conversation growing without bound, it is idempotent, and it only ever fires on
+        /// results outside the recent window.
         /// </summary>
         public HistoryCompactor.CompactionReport CompactHistory()
         {
@@ -227,6 +232,12 @@ namespace RhinoClaude.Agent
                             Tools = _registry.ToSpecs()
                         };
                         request.ApplyModelCapabilities(Settings.Effort, Settings.ShowThinking);
+
+                        // The whole prefix — system prompt, every tool schema, and every tool
+                        // result so far — is otherwise re-billed at the full input rate on each
+                        // iteration. Placed after ApplyModelCapabilities so the request is in
+                        // its final shape.
+                        PromptCache.Apply(request);
 
                         var accumulator = await _client.StreamAsync(request, OnStreamNotification, token)
                                                        .ConfigureAwait(false);
