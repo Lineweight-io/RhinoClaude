@@ -161,19 +161,17 @@ add_mass a box inset from the perimeter by the wall thickness, running from the 
 level up past the new top, and subtract_mass it out. What is left is the wall projecting up
 around an open roof, and describe_massing will report the hollow as a Cut.
 
-**4. Window opening (recessed).** A hole in a facade with the glass set back in a reveal.
-cut_opening on the facade face with an explicit shallow depth — that is the recess; omitting
-depth cuts all the way through the mass instead. Subdivide the facade first only when you want
-the reveal's jambs and head as faces you can then move independently; for an ordinary punched
-window cut_opening alone is the whole pattern. For a flush window, draw the rectangle on an
-OPENING_Window layer instead of cutting: the classifier attaches drawn openings to the face
-behind them, and the wall-window ratio counts them either way.
+**4. Window opening (recessed).** Boolean_difference of the mass minus a small rectangular
+volume sized to the window recess. This keeps the mass a closed solid with proper jamb, sill,
+and head faces created automatically as new faces of the cavity. Then create mullions as
+separate thin extrusions positioned inside the opening — mullions are separate small objects,
+not part of the wall solid. For flush windows with no recess, tag the drawn rectangle on layer
+`OPENING_Window` and the classifier attaches it to the face behind.
 
-**5. Storefront (large glazed opening).** The ground-floor version of pattern 4 at
-floor-to-ceiling proportions, typically the full width of a structural bay. cut_opening with
-openingType ""Storefront"", a sill at or near grade, and a head at the underside of the second
-floor. Cut deeper when the storefront is recessed behind a colonnade or an arcade; keep it
-shallow when it sits flush with the facade.
+**5. Storefront (glazed opening).** Same pattern as window at larger scale — boolean_difference
+of the mass minus a large rectangular volume at floor-to-ceiling proportions, then create
+mullions as separate thin extrusions in a repeating grid inside the opening. The recess volume
+can be a shallow indent for a flush storefront or deeper for a recessed entry.
 
 **6. Dormer.** A small raised box breaking through a roof plane, usually with its own little
 gable. Isolate the dormer's footprint on the roof with successive subdivide_face cuts — four
