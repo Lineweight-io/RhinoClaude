@@ -5,6 +5,13 @@ sidebar; Claude inspects the model, creates and edits geometry through a curated
 looks at what it built, and reports back — all inside a single undo group you can revert with
 one click.
 
+Built by [Lineweight](https://github.com/Lineweight-io). MIT licensed — see [`LICENSE`](LICENSE).
+
+**Where to start reading:** [`AGENT_REFACTOR_PLAN.md`](AGENT_REFACTOR_PLAN.md) is the architecture
+of the agent loop; [`SEMANTIC_LAYER_PLAN.md`](SEMANTIC_LAYER_PLAN.md) is the architecture of the
+massing model on top of it; [`LAYER_CONVENTIONS.md`](LAYER_CONVENTIONS.md) is the one thing you
+need to know to use it; [`TESTING.md`](TESTING.md) is the smoke-test script.
+
 > **Status: code-complete against `AGENT_REFACTOR_PLAN.md` (phases 0–10) and
 > `SEMANTIC_LAYER_PLAN.md` (phases A–I).** Both target frameworks build with no warnings and
 > 367 unit tests pass.
@@ -48,8 +55,11 @@ and to believe a screenshot over a semantic result when the two disagree.
 - **Streaming tool-use loop** — SSE from the first request. Claude plans, calls tools, reads
   the results, and iterates until it signals done or hits a guardrail. Summarized reasoning
   streams into a collapsed card above each answer.
-- **Guardrails** — $0.50 per turn and 25 iterations by default, both configurable. The loop
+- **Guardrails** — $2.00 per turn and 25 iterations by default, both configurable. The loop
   stops before the next model call rather than mid-mutation.
+- **Pluggable model provider** — Anthropic by default; DeepSeek, Moonshot (Kimi), Qwen, OpenAI,
+  a local Ollama, or any OpenAI-compatible endpoint are selectable in settings. See
+  [Model providers](#model-providers).
 - **One-click revert** — every mutation opens its own Rhino undo record; "Revert session"
   (or `ClaudeRevertSession`) pops all of them.
 - **Review exports** — one button writes the conversation as shareable markdown (messages,
@@ -140,7 +150,9 @@ there for the rest.
 
 - **Rhino 7** (Windows, .NET Framework 4.8) and/or **Rhino 8** (Windows, .NET 7)
 - **.NET SDK 7 or later** (for building)
-- **Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com)
+- **Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com).
+  Optional if you point the plugin at another provider or a local Ollama; see
+  [Model providers](#model-providers).
 
 ## Project structure
 
@@ -275,6 +287,9 @@ plugin settings win if both are present.
 `API_Key.txt` at the repo root is gitignored and is not read by the plugin. Use `ClaudeSetKey`
 or the environment variable.
 
+To run against something other than Claude, open the gear in the sidebar, pick a provider, and
+enter that provider's key there — see [Model providers](#model-providers). Ollama needs no key.
+
 ## Usage
 
 ```
@@ -357,13 +372,14 @@ Behind the gear in the sidebar header:
 
 | Setting | Default |
 |---|---|
-| Loop model | `claude-sonnet-5` |
+| Provider | Anthropic |
+| Loop model | `claude-haiku-4-5-20251001` |
 | Effort | `high` |
 | Show summarized reasoning | on |
 | Self-review | on |
 | Reviewer model | `claude-opus-5` |
 | Max review cycles per turn | 2 |
-| Cost budget per turn | $0.50 |
+| Cost budget per turn | $2.00 |
 | Max iterations per turn | 25 |
 | Max tokens per response | 32000 |
 | Script tool enabled | yes |
@@ -386,6 +402,38 @@ on models that have no effort parameter.
 **Max tokens** caps thinking *plus* the response together on models that think by default
 (Sonnet 5, Opus 5), which is why the default is 32000 rather than a value tuned for a
 non-thinking model. Requests always stream, so there is no timeout reason to keep it small.
+
+### Model providers
+
+Anthropic is the default and the only one the loop was designed against. Everything else goes
+through an OpenAI-compatible translation layer behind `ILlmClient`, so the agent loop, the tool
+schemas and the self-review path are unchanged whichever you pick.
+
+| Provider | Endpoint | Key |
+|---|---|---|
+| Anthropic (Claude) — default | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
+| DeepSeek | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| Moonshot (Kimi) | `https://api.moonshot.ai/v1` | per-provider, set in settings |
+| Alibaba Qwen (Model Studio) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | per-provider, set in settings |
+| OpenAI | `https://api.openai.com/v1` | per-provider, set in settings |
+| Ollama (local) | `http://localhost:11434/v1` | none required |
+| Custom OpenAI-compatible | whatever you enter | per-provider, set in settings |
+
+Keys are stored per provider, so switching back and forth does not make you re-enter anything,
+and the loop and reviewer model ids are remembered per provider too — selecting DeepSeek will
+not leave a Claude model id pinned against it.
+
+The translation is a pure layer with no HTTP in it: outgoing, the Anthropic request shape is
+rewritten into OpenAI chat-completions; incoming, the OpenAI SSE stream is rewritten back into
+Anthropic-shaped events, so the accumulator and the panel see one format. Features an
+OpenAI-compatible endpoint has no equivalent for — signed thinking blocks, prompt-cache
+breakpoints — are dropped rather than faked.
+
+**A caveat worth stating plainly:** tool-use reliability varies a lot by model. The loop asks for
+many sequential tool calls with strict JSON arguments, and models that are weaker at that will
+stall or emit malformed input more often. Cost accounting also falls back to a conservative
+estimate on models whose pricing isn't in `CostBudget`'s table, which makes the budget guardrail
+approximate rather than exact on those.
 
 ### Model compatibility
 
@@ -468,6 +516,22 @@ all implemented. What remains is verification inside Rhino, and then whatever `s
 and `classifier_timing.jsonl` say: which scripts deserve promotion from the Tier 2 escape hatch,
 and whether the classifier's cache tiers stay inside their budgets on a real project file.
 
+## Contributing
+
+The most useful thing anyone can contribute right now is **verification inside a real Rhino
+session**. Everything below `RhinoCommon` is compile-only here, so the geometry results, camera
+control and undo behaviour have never been exercised against a live document — see the caveat at
+the top and the script in [`TESTING.md`](TESTING.md). Open issues are tagged
+`help wanted` and `good first issue` where a new contributor can realistically start.
+
+Branches are kept unsquashed so the reasoning is readable: `main` is the integrated state, and
+each `feature/*` and `fix/*` branch is the work that went into it.
+
 ## License
 
-MIT — use and modify freely.
+MIT — see [`LICENSE`](LICENSE). Use and modify freely.
+
+## About
+
+RhinoClaude is a [Lineweight](https://github.com/Lineweight-io) project — tooling for architects
+who work in Rhino. Other Lineweight work lives under the same org.
