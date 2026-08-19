@@ -129,7 +129,8 @@ namespace RhinoClaude.Services.Agent
                 Invocations = session.Invocations.ToList(),
                 SessionUsage = session.SessionUsage,
                 Mutations = mutations?.All,
-                PendingUndoCount = pendingUndoCount
+                PendingUndoCount = pendingUndoCount,
+                Reviews = session.Reviews.ToList()
             };
         }
 

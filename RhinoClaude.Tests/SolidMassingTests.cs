@@ -517,4 +517,222 @@ namespace RhinoClaude.Tests
             Assert.Contains("does not cross", offRoof.Error);
         }
     }
+
+    /// <summary>
+    /// The multi-cut form, which exists because a single straight line cannot describe the roof
+    /// of anything but a box.
+    ///
+    /// The behaviour under test was measured against Rhino rather than assumed — see
+    /// tools/rhino-headless/probes/lgable.py. Three findings drive these tests: one curve that
+    /// stops inside a face divides nothing; two curves that each stop inside but meet each other
+    /// and reach the boundary between them divide it in one Split call; and the resulting ridge
+    /// edges have to move in a single transform or the faces spanning them warp.
+    /// </summary>
+    public class MultiCutTests
+    {
+        /// <summary>
+        /// The L from the probe: 60 x 30 east-west, 30 x 50 north-south. Its top face is
+        /// re-entrant, so the frame is the bounding box and the real boundary is smaller.
+        /// </summary>
+        private static FaceView LRoof() => new FaceView
+        {
+            FaceId = "house:face:6",
+            MassId = "house",
+            FaceIndex = 6,
+            Orientation = SemanticVocabulary.OrientationUp,
+            Normal = new Vec3(0, 0, 1),
+            Centroid = new Vec3(25, 20, 12),
+            Area = 2400,
+            IsPlanar = true,
+            ElevationMin = 12,
+            ElevationMax = 12,
+            Bbox = BoxView.From(new Vec3(0, 0, 12), new Vec3(60, 50, 12))
+        };
+
+        private static FaceCut LGableCut() => new FaceCut
+        {
+            // Two ridge segments through the turning point at (15, 15)...
+            PolylinePoints = new List<double[]>
+            {
+                new double[] { 60, 15 },
+                new double[] { 15, 15 },
+                new double[] { 15, 50 }
+            },
+            // ...plus the hip out to the outside corner and the valley in to the inside one.
+            Lines = new List<double[][]>
+            {
+                new[] { new double[] { 15, 15 }, new double[] { 0, 0 } },
+                new[] { new double[] { 15, 15 }, new double[] { 30, 30 } }
+            }
+        };
+
+        [Fact]
+        public void MultiSegmentCutParsesFromBothListForms()
+        {
+            var element = JsonDocument.Parse(@"{
+                ""polyline"": [[60, 15], [15, 15], [15, 50]],
+                ""lines"": [
+                  { ""startPoint"": [15, 15], ""endPoint"": [0, 0] },
+                  { ""startPoint"": [15, 15], ""endPoint"": [30, 30] }
+                ]
+            }").RootElement;
+
+            var cut = FaceCut.Parse(element);
+
+            Assert.True(cut.IsMultiSegment);
+            Assert.False(cut.IsEmpty);
+            Assert.Equal(3, cut.PolylinePoints.Count);
+            Assert.Equal(2, cut.Lines.Count);
+
+            // Two polyline segments plus two lines, whichever order they come out in.
+            Assert.Equal(4, cut.AllSegments().Count());
+        }
+
+        [Fact]
+        public void CuttingCurveIdsParseAsAList()
+        {
+            var element = JsonDocument.Parse(
+                @"{""cuttingCurveId"": ""a"", ""cuttingCurveIds"": [""b"", ""c""]}").RootElement;
+
+            Assert.Equal(new[] { "a", "b", "c" }, FaceCut.Parse(element).AllCurveIds().ToArray());
+        }
+
+        [Fact]
+        public void SeveralCurvesAllReachThePlan()
+        {
+            var cut = new FaceCut { CuttingCurveIds = new List<string> { "one", "two" } };
+            var plan = FaceCutPlanner.Plan(LRoof(), cut, 0.001, 1.0);
+
+            Assert.True(plan.Resolved);
+            Assert.True(plan.UsesCurve);
+            Assert.Equal(2, plan.CuttingCurveIds.Count);
+        }
+
+        [Fact]
+        public void EverySegmentSurvivesPlanningAsItsOwnCut()
+        {
+            var plan = FaceCutPlanner.Plan(LRoof(), LGableCut(), 0.001, 1.0);
+
+            Assert.True(plan.Resolved);
+            Assert.Equal(4, plan.Segments.Count);
+        }
+
+        [Fact]
+        public void SegmentsAreNotStretchedAcrossTheFace()
+        {
+            var plan = FaceCutPlanner.Plan(LRoof(), LGableCut(), 0.001, 1.0);
+
+            // The single-line form extends to the bounding box; this one must not. A ridge
+            // stretched to the frame would saw straight through the gable wall it stops at.
+            var valley = plan.Segments.Single(
+                s => s.Start.DistanceTo(new Vec3(15, 15, 12)) < 1e-6
+                     && s.End.DistanceTo(new Vec3(30, 30, 12)) < 1e-6);
+
+            Assert.Equal(15, valley.Start.X, 6);
+            Assert.Equal(30, valley.End.X, 6);
+        }
+
+        [Fact]
+        public void LooseEndsOnTheBoundaryAreNudgedPastIt()
+        {
+            var plan = FaceCutPlanner.Plan(LRoof(), LGableCut(), 0.001, 1.0);
+
+            // (60, 15) and (15, 50) are free ends sitting on the frame boundary, so they run a
+            // little past it — a cut landing a hair short leaves a sliver and fails the split.
+            Assert.Contains(plan.Segments, s => s.Start.X > 60 || s.End.X > 60);
+            Assert.Contains(plan.Segments, s => s.Start.Y > 50 || s.End.Y > 50);
+
+            // All four cuts meet at the turning point (15, 15), so no one of them owns it alone
+            // and it is never nudged — the ridge stays connected to the hip and the valley.
+            Assert.Equal(4, plan.Segments.Count(
+                s => s.Start.DistanceTo(new Vec3(15, 15, 12)) < 1e-6
+                     || s.End.DistanceTo(new Vec3(15, 15, 12)) < 1e-6));
+        }
+
+        [Fact]
+        public void InsideCornerIsLeftAloneBecauseItIsNotOnTheFrame()
+        {
+            var plan = FaceCutPlanner.Plan(LRoof(), LGableCut(), 0.001, 1.0);
+
+            // (30, 30) is a real corner of an L but sits inside the bounding box, so the nudge
+            // rule does not apply and the valley stops exactly where it was asked to.
+            Assert.Contains(plan.Segments, s => s.End.DistanceTo(new Vec3(30, 30, 12)) < 1e-6);
+        }
+
+        [Fact]
+        public void MultiSegmentPlanSaysTheRuleAppliesToTheSet()
+        {
+            var plan = FaceCutPlanner.Plan(LRoof(), LGableCut(), 0.001, 1.0);
+
+            Assert.Contains("together they have to divide it", plan.Note);
+        }
+
+        [Fact]
+        public void DegenerateSegmentsAreDroppedAndAnAllEmptyCutFails()
+        {
+            var withStub = new FaceCut
+            {
+                Lines = new List<double[][]>
+                {
+                    new[] { new double[] { 0, 0 }, new double[] { 30, 30 } },
+                    new[] { new double[] { 10, 10 }, new double[] { 10, 10 } }
+                }
+            };
+
+            Assert.Single(FaceCutPlanner.Plan(LRoof(), withStub, 0.001, 1.0).Segments);
+
+            var allStubs = new FaceCut
+            {
+                Lines = new List<double[][]>
+                {
+                    new[] { new double[] { 10, 10 }, new double[] { 10, 10 } }
+                }
+            };
+
+            var failed = FaceCutPlanner.Plan(LRoof(), allStubs, 0.001, 1.0);
+            Assert.False(failed.Resolved);
+            Assert.Contains("any length", failed.Error);
+        }
+
+        [Fact]
+        public void SingleLineFormStillFillsSegmentsSoCallersCanReadOneList()
+        {
+            var plan = FaceCutPlanner.Plan(
+                LRoof(),
+                new FaceCut { LineStart = new double[] { 0, 15 }, LineEnd = new double[] { 60, 15 } },
+                0.001, 1.0);
+
+            Assert.True(plan.Resolved);
+            Assert.Single(plan.Segments);
+            Assert.Equal(plan.Start.X, plan.Segments[0].Start.X, 6);
+            Assert.Equal(plan.End.X, plan.Segments[0].End.X, 6);
+        }
+
+        [Fact]
+        public void RidgeEdgesAreToldApartFromTheHipAndValleyTheSameCutMade()
+        {
+            // What the Brep hands back after the four-curve split: the two ridge segments, the
+            // hip, and the valley. Only the ridge pair may be raised — lifting the hip would
+            // pull the outside corner into the air.
+            var after = new List<EdgeSegment>
+            {
+                new EdgeSegment(new Vec3(15, 15, 12), new Vec3(60, 15, 12)),   // ridge A
+                new EdgeSegment(new Vec3(15, 15, 12), new Vec3(15, 50, 12)),   // ridge B
+                new EdgeSegment(new Vec3(15, 15, 12), new Vec3(0, 0, 12)),     // hip
+                new EdgeSegment(new Vec3(15, 15, 12), new Vec3(30, 30, 12)),   // valley
+                new EdgeSegment(new Vec3(0, 0, 12), new Vec3(60, 0, 12))       // an eave, unchanged
+            };
+
+            var ridge = new List<EdgeSegment>
+            {
+                new EdgeSegment(new Vec3(60, 15, 12), new Vec3(15, 15, 12)),
+                new EdgeSegment(new Vec3(15, 15, 12), new Vec3(15, 50, 12))
+            };
+
+            var found = EdgeTopologyDiff.OnAnyLine(
+                after, new[] { 0, 1, 2, 3 }, ridge, 0.001);
+
+            Assert.Equal(new[] { 0, 1 }, found);
+        }
+    }
 }

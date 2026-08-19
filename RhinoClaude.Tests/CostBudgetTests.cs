@@ -161,13 +161,20 @@ namespace RhinoClaude.Tests
         [Fact]
         public void TheDefaultLoopModelIsPricedByTheTableRatherThanTheFallback()
         {
-            // A default whose id the table does not recognise would be silently billed at the
-            // Sonnet fallback, and every budget reading would be wrong by 3x.
-            var pricing = CostBudget.PricingFor(AgentSettings.DefaultLoopModel);
-            var fallback = CostBudget.PricingFor("some-future-model");
+            // A default whose id the table does not recognise is silently billed at Table[0],
+            // the Sonnet 4.5 rate. Sonnet 5's *list* rate is that same $3/$15, so equality
+            // there proves nothing — the promotional window is what only a real entry carries.
+            // Both sides are date-pinned so this keeps testing the lookup after the intro ends.
+            var intro    = CostBudget.PricingFor(AgentSettings.DefaultLoopModel, new DateTime(2026, 8, 14));
+            var list     = CostBudget.PricingFor(AgentSettings.DefaultLoopModel, new DateTime(2026, 9, 1));
+            var fallback = CostBudget.PricingFor("some-future-model", new DateTime(2026, 8, 14));
 
-            Assert.NotEqual(fallback.InputPerMTok, pricing.InputPerMTok);
-            Assert.Equal(1.00, pricing.InputPerMTok);
+            Assert.Equal(2.00, intro.InputPerMTok);
+            Assert.Equal(10.00, intro.OutputPerMTok);
+            Assert.NotEqual(fallback.InputPerMTok, intro.InputPerMTok);
+
+            Assert.Equal(3.00, list.InputPerMTok);
+            Assert.Equal(15.00, list.OutputPerMTok);
         }
 
         [Fact]

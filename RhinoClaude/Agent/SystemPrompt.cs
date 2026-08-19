@@ -131,6 +131,15 @@ the edge that returns. It is not two planes built over the box, and it is not a 
 swept between edges. The test is whether the result is still one closed solid afterwards — if
 it is not, the move was the wrong one.
 
+Staying closed is necessary but not sufficient. A roof whose planes had to warp is still one
+solid and still measures fine; it just looks wrong. move_edge and create_gable_roof will not
+make that trade for you: a move that would open the solid, or bend a face that was flat, is
+refused outright and nothing is written. Such an error is not damage to repair — the mass is
+left exactly as it was, so the face and edge indices you already hold are still valid. Reissue
+the same move with every edge of the feature in edgeSelectors, or with the cut the form was
+missing added to additionalCuts. A face that stopped being planar always means one of those two.
+subdivide_face still reports allFacesPlanar for the cuts it can leave standing. See pattern 1a.
+
 ### Common Massing Patterns
 
 The following patterns show how to compose the primitive tools to build recurring architectural
@@ -149,6 +158,34 @@ is the one shipped composite and it undoes as a single action. To vary it, subdi
 {role: ""roof""} with {line: {startPoint, endPoint}} along the intended ridge, then move_edge on
 the returned newEdgeIds[0] with direction ""+z"" and the pitch height as the distance.
 
+**1a. Gable roof on an L, T or U plan.** The case that goes wrong most, and it goes wrong the
+same way every time: treated as a rectangular gable it produces two warped surfaces instead of
+four flat roof planes. Three facts drive the recipe.
+
+*The ridge bends.* On an L it is two segments meeting over the point where the wings cross —
+for a footprint 60 wide (y 0..30) with a 30-wide wing running north (x 0..30), the wing centre
+lines are y = 15 and x = 15, so the ridge runs (60,15) → (15,15) → (15,50). Each end lands at
+the middle of a gable wall.
+
+*Two more cuts are needed, and they are not part of the ridge.* From the turning point, one cut
+runs out to the outside corner — (15,15) → (0,0), the hip — and one runs in to the inside
+corner — (15,15) → (30,30), the valley. These give each roof plane a straight edge to sit on.
+Skip them and the geometry cannot be flat, whatever else you do right.
+
+*Everything that rises, rises at once.* The two ridge segments are two edges. Lift them in ONE
+move_edge call via edgeSelectors. Lifting one and then the other tears the roof, because the
+faces spanning both have to bend to reach the half still at eave level.
+
+So either create_gable_roof with ridgePoints for the ridge and additionalCuts for the hip and
+valley, or subdivide_face with cut {polyline: [...ridge...], lines: [...hip, valley...]} in a
+single call, then one move_edge with both returned ridge edge ids. Do not lift the hip or valley
+edges. Check allFacesPlanar in the response: true means four flat planes, false means the cut
+set was incomplete. A T plan is the same with two valleys; a U is two L's sharing a wing.
+
+Cuts work as a set, not one at a time. No individual cut has to reach the face boundary — the
+ridge segments do not — but together they must divide the face, which is why they all go into
+one subdivide_face call.
+
 **2. Shed / single-slope roof.** One plane sloping the whole way across, high on one side. On a
 box no subdivision is needed: move_edge on the top edge of the high side, direction ""+z"",
 distance equal to the rise. Identify that edge from get_mass_edges by its endpoints — a role
@@ -161,19 +198,17 @@ add_mass a box inset from the perimeter by the wall thickness, running from the 
 level up past the new top, and subtract_mass it out. What is left is the wall projecting up
 around an open roof, and describe_massing will report the hollow as a Cut.
 
-**4. Window opening (recessed).** A hole in a facade with the glass set back in a reveal.
-cut_opening on the facade face with an explicit shallow depth — that is the recess; omitting
-depth cuts all the way through the mass instead. Subdivide the facade first only when you want
-the reveal's jambs and head as faces you can then move independently; for an ordinary punched
-window cut_opening alone is the whole pattern. For a flush window, draw the rectangle on an
-OPENING_Window layer instead of cutting: the classifier attaches drawn openings to the face
-behind them, and the wall-window ratio counts them either way.
+**4. Window opening (recessed).** Boolean_difference of the mass minus a small rectangular
+volume sized to the window recess. This keeps the mass a closed solid with proper jamb, sill,
+and head faces created automatically as new faces of the cavity. Then create mullions as
+separate thin extrusions positioned inside the opening — mullions are separate small objects,
+not part of the wall solid. For flush windows with no recess, tag the drawn rectangle on layer
+`OPENING_Window` and the classifier attaches it to the face behind.
 
-**5. Storefront (large glazed opening).** The ground-floor version of pattern 4 at
-floor-to-ceiling proportions, typically the full width of a structural bay. cut_opening with
-openingType ""Storefront"", a sill at or near grade, and a head at the underside of the second
-floor. Cut deeper when the storefront is recessed behind a colonnade or an arcade; keep it
-shallow when it sits flush with the facade.
+**5. Storefront (glazed opening).** Same pattern as window at larger scale — boolean_difference
+of the mass minus a large rectangular volume at floor-to-ceiling proportions, then create
+mullions as separate thin extrusions in a repeating grid inside the opening. The recess volume
+can be a shallow indent for a flush storefront or deeper for a recessed entry.
 
 **6. Dormer.** A small raised box breaking through a roof plane, usually with its own little
 gable. Isolate the dormer's footprint on the roof with successive subdivide_face cuts — four

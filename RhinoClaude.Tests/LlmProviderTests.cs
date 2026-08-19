@@ -66,6 +66,33 @@ namespace RhinoClaude.Tests
         }
 
         [Fact]
+        public void TheShippedDefaultsAreSonnet5OnTheLoopAndOpus5OnTheReviewer()
+        {
+            // Pinned on purpose. These two ids are what every fresh install bills against, so
+            // a drive-by edit to either should fail here rather than in someone's invoice.
+            Assert.Equal("claude-sonnet-5", AgentSettings.DefaultLoopModel);
+            Assert.Equal("claude-opus-5", AgentSettings.DefaultReviewerModel);
+
+            // The utility model is decoupled by design: it resolves to the same id as the loop
+            // today, and is free to diverge later without dragging the loop along with it.
+            Assert.Equal("claude-sonnet-5", AgentSettings.DefaultUtilityModel);
+
+            var anthropic = LlmProviderCatalog.Get(LlmProvider.Anthropic);
+            Assert.Equal(AgentSettings.DefaultLoopModel, anthropic.DefaultLoopModel);
+            Assert.Equal(AgentSettings.DefaultReviewerModel, anthropic.DefaultReviewerModel);
+
+            // The dropdown must offer the default exactly once. Moving the default onto an id
+            // the list already carried is precisely how a duplicate entry gets introduced.
+            Assert.Single(anthropic.KnownModels, m => m.Id == AgentSettings.DefaultLoopModel);
+            Assert.Contains(anthropic.KnownModels, m => m.Id == AgentSettings.DefaultReviewerModel);
+
+            // And both must price off a real table entry rather than the Table[0] fallback.
+            var on = new DateTime(2026, 8, 14);
+            Assert.Equal(2.00, CostBudget.PricingFor(AgentSettings.DefaultLoopModel, on).InputPerMTok);
+            Assert.Equal(5.00, CostBudget.PricingFor(AgentSettings.DefaultReviewerModel, on).InputPerMTok);
+        }
+
+        [Fact]
         public void SwitchingProviderMovesTheModelsWithIt()
         {
             var settings = new AgentSettings();

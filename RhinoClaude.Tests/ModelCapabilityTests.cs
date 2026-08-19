@@ -147,10 +147,11 @@ namespace RhinoClaude.Tests
         public void MaxTokensIsClampedToWhatTheModelAccepts()
         {
             // Haiku 4.5 stops at 64K where every other current model reaches 128K, so a limit
-            // carried over from a Sonnet session would otherwise 400 on every turn.
+            // carried over from a Sonnet session would otherwise 400 on every turn. Pinned to
+            // the Haiku id rather than the default, which no longer has the lower ceiling.
             var request = new MessagesRequest
             {
-                Model = AgentSettings.DefaultLoopModel,
+                Model = "claude-haiku-4-5-20251001",
                 MaxTokens = 128000,
                 Messages = { AgentMessage.User("hi") }
             };
@@ -177,24 +178,37 @@ namespace RhinoClaude.Tests
         }
 
         [Fact]
-        public void ATurnOnTheDefaultLoopModelSendsNothingItWouldReject()
+        public void ATurnOnTheDefaultLoopModelSendsWhatItAccepts()
         {
-            // Carried-over settings are the trap: Effort and ShowThinking keep their values
-            // when the model changes, and on Haiku either one reaching the wire is a 400.
+            // The inverse of the Haiku default this replaced: Sonnet 5 takes both knobs, so a
+            // default turn is expected to carry them, and xhigh survives rather than clamping.
             using var doc = BuildRequest(AgentSettings.DefaultLoopModel, "xhigh", showThinking: true);
+            var root = doc.RootElement;
+
+            Assert.True(root.TryGetProperty("thinking", out _));
+            Assert.Equal("xhigh", root.GetProperty("output_config").GetProperty("effort").GetString());
+            Assert.Equal(AgentSettings.DefaultLoopModel, root.GetProperty("model").GetString());
+        }
+
+        [Fact]
+        public void ATurnOnHaikuStillSendsNothingItWouldReject()
+        {
+            // Haiku is no longer the default but is still selectable, and carried-over settings
+            // are the trap: Effort and ShowThinking keep their values when the model changes,
+            // and on Haiku either one reaching the wire is a 400.
+            using var doc = BuildRequest("claude-haiku-4-5-20251001", "xhigh", showThinking: true);
             var root = doc.RootElement;
 
             Assert.False(root.TryGetProperty("thinking", out _));
             Assert.False(root.TryGetProperty("output_config", out _));
-            Assert.Equal(AgentSettings.DefaultLoopModel, root.GetProperty("model").GetString());
         }
 
         [Fact]
         public void CachingTheDefaultLoopModelStillPlacesEveryBreakpoint()
         {
-            // Haiku 4.5 needs a 4096-token prefix before anything caches, against 1024 on
-            // Sonnet 5. The placement does not change — the tool schemas alone clear it — but
-            // a request built for this model must still carry all four markers.
+            // Sonnet 5 caches from a 1024-token prefix, against Haiku 4.5's 4096. The
+            // placement does not change — the tool schemas alone clear either floor — but a
+            // request built for this model must still carry all four markers.
             var request = new MessagesRequest
             {
                 Model = AgentSettings.DefaultLoopModel,

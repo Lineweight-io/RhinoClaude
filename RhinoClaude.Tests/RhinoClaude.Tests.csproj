@@ -13,12 +13,18 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>RhinoClaude.Tests</RootNamespace>
     <AssemblyName>RhinoClaude.Tests</AssemblyName>
+    <!-- CA1416: SecretStore's DPAPI calls are Windows-only. Rhino for Windows is the only host
+         this plugin targets, so the platform-compatibility analyser has nothing useful to say —
+         same reasoning as the plugin project's own suppression. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
     <PackageReference Include="xunit" Version="2.7.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7" />
+    <!-- SecretStore is linked in below and uses DPAPI. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="7.0.1" />
   </ItemGroup>
 
   <!--
@@ -53,6 +59,8 @@
     <Compile Include="..\RhinoClaude\Agent\ToolContracts.cs" Link="Linked\ToolContracts.cs" />
     <Compile Include="..\RhinoClaude\Agent\ToolRegistry.cs" Link="Linked\ToolRegistry.cs" />
     <Compile Include="..\RhinoClaude\Agent\JsonlLogger.cs" Link="Linked\JsonlLogger.cs" />
+    <!-- Credential-at-rest encryption: pure BCL, so it belongs under test. -->
+    <Compile Include="..\RhinoClaude\Services\Agent\SecretStore.cs" Link="Linked\SecretStore.cs" />
   </ItemGroup>
 
   <!--

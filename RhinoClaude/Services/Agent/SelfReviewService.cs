@@ -104,9 +104,38 @@ namespace RhinoClaude.Services.Agent
             if (tagCheck != null) facts.Checks.Add(tagCheck);
 
             facts.MassingComposition = SafeMassingComposition();
+            facts.MeasuredEnvelope = MeasureEnvelope(objects, facts.Units);
 
             return facts;
         }
+
+        /// <summary>
+        /// The overall size of what survived, in model units. Handed to the reviewer as a number
+        /// so a claim about the building's dimensions can be checked rather than eyeballed.
+        /// </summary>
+        private static string MeasureEnvelope(List<RhinoObject> objects, string units)
+        {
+            if (objects == null || objects.Count == 0) return null;
+
+            var union = BoundingBox.Unset;
+            foreach (var obj in objects)
+            {
+                var box = obj.Geometry?.GetBoundingBox(true) ?? BoundingBox.Unset;
+                if (box.IsValid) union.Union(box);
+            }
+
+            if (!union.IsValid) return null;
+
+            var size = union.Max - union.Min;
+            return string.Format(
+                "min ({0}, {1}, {2}) → max ({3}, {4}, {5}); size {6} × {7} × {8} {9}",
+                N(union.Min.X), N(union.Min.Y), N(union.Min.Z),
+                N(union.Max.X), N(union.Max.Y), N(union.Max.Z),
+                N(size.X), N(size.Y), N(size.Z), units ?? "model units");
+        }
+
+        private static string N(double value) =>
+            value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
         /// <summary>
         /// A classifier failure must not cost the review. Whatever goes wrong in there, the
