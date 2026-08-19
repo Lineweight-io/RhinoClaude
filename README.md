@@ -12,13 +12,15 @@ of the agent loop; [`SEMANTIC_LAYER_PLAN.md`](SEMANTIC_LAYER_PLAN.md) is the arc
 massing model on top of it; [`LAYER_CONVENTIONS.md`](LAYER_CONVENTIONS.md) is the one thing you
 need to know to use it; [`TESTING.md`](TESTING.md) is the smoke-test script.
 
-> **Status: code-complete against `AGENT_REFACTOR_PLAN.md` (phases 0–10) and
-> `SEMANTIC_LAYER_PLAN.md` (phases A–I).** Both target frameworks build with no warnings and
+> **Status: early release.** Code-complete against `AGENT_REFACTOR_PLAN.md` (phases 0–10) and
+> `SEMANTIC_LAYER_PLAN.md` (phases A–I); both target frameworks build with no warnings and
 > 367 unit tests pass.
 >
-> **Nothing Rhino-facing has been run inside Rhino yet.** RhinoCommon is a compile-only
-> reference, so no test here touches a real document. See **`TESTING.md`** for the smoke-test
-> script to run first.
+> **Live-Rhino testing has produced working results for simple massing tasks** — extrude a
+> footprint, add a straightforward gable roof — but more complex multi-step recipes (dormer,
+> porch with its own roof, mixed roof forms) still fail more often than they succeed. See the
+> [release notes](https://github.com/Lineweight-io/RhinoClaude/releases/latest) for detail, and
+> **`TESTING.md`** for the smoke-test script. Contributions and bug reports welcome.
 
 ## Quick install
 
