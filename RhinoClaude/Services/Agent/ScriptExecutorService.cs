@@ -178,8 +178,30 @@ namespace RhinoClaude.Services.Agent
 
                     // Blocking on the UI thread is deliberate: RhinoCommon requires the UI
                     // thread, so the script owns it for at most `timeoutSeconds`.
-                    var state = script.RunAsync(globals, linked.Token).GetAwaiter().GetResult();
-                    rawResult = globals.Result ?? state.ReturnValue;
+                    //
+                    // The synchronization context is cleared around that block. Waiting on a
+                    // task with GetResult() while a UI context is installed is the classic
+                    // sync-over-async deadlock: any continuation that tries to post back to
+                    // this thread can never run, because this thread is the one waiting. The
+                    // timeout above cannot break it either, since delivering the cancellation
+                    // needs the same blocked thread. That deadlock freezes the whole panel and
+                    // is what gets the plug-in disabled by Rhino's load protection on restart.
+                    //
+                    // With no context installed, continuations resume on the thread pool
+                    // instead. Straight-line scripts — which is all of them in practice — never
+                    // reach a continuation and still run entirely on the UI thread, so their
+                    // RhinoCommon access is unchanged.
+                    var previousContext = SynchronizationContext.Current;
+                    try
+                    {
+                        SynchronizationContext.SetSynchronizationContext(null);
+                        var state = script.RunAsync(globals, linked.Token).GetAwaiter().GetResult();
+                        rawResult = globals.Result ?? state.ReturnValue;
+                    }
+                    finally
+                    {
+                        SynchronizationContext.SetSynchronizationContext(previousContext);
+                    }
                 }
                 catch (CompilationErrorException ex)
                 {
@@ -213,6 +235,18 @@ namespace RhinoClaude.Services.Agent
             var deleted = before.Except(after).Select(g => g.ToString()).ToList();
 
             bool success = string.IsNullOrEmpty(stderr) && (compileErrors == null || compileErrors.Count == 0);
+            bool documentChanged = created.Count > 0 || deleted.Count > 0;
+
+            // A script that compiles, runs and leaves the document untouched is the quiet failure:
+            // it built geometry into a local and never added it, and the empty id lists below say
+            // so only by omission. Read-only scripts land here too, so this states the fact and
+            // the likely cause rather than calling it an error.
+            string changeNote = success && !documentChanged
+                ? "The script ran without error and the document is unchanged — nothing was created, " +
+                  "deleted or replaced. That is expected for a read-only script. If this one was meant " +
+                  "to build something, geometry made inside the script only enters the model when you " +
+                  "call Doc.Objects.Add* (or Replace/Delete) on it; returning it is not enough."
+                : null;
 
             string serialized;
             bool truncated;
@@ -233,6 +267,8 @@ namespace RhinoClaude.Services.Agent
                     { "executionMs", stopwatch.ElapsedMilliseconds },
                     { "createdObjectIds", created },
                     { "deletedObjectIds", deleted },
+                    { "documentChanged", documentChanged },
+                    { "note", changeNote },
                     // Rhino replaces an object's id on most edits, so a "modified" object shows
                     // up as a delete plus a create. Reporting that honestly beats guessing.
                     { "modifiedObjectIds", new List<string>() }

@@ -38,6 +38,13 @@ namespace RhinoClaude.Agent
         public IReadOnlyList<SessionMutation> Mutations { get; set; }
         public int PendingUndoCount { get; set; }
 
+        /// <summary>
+        /// Every review the session ran. A verdict returned through signal_done also appears in
+        /// the transcript below; a defensive review appears nowhere else, which is why this list
+        /// exists rather than relying on the tool results.
+        /// </summary>
+        public List<ReviewRecord> Reviews { get; set; } = new List<ReviewRecord>();
+
         /// <summary>Tool input and result JSON longer than this is truncated with a marker.</summary>
         public int MaxJsonChars { get; set; } = 1500;
     }
@@ -73,6 +80,7 @@ namespace RhinoClaude.Agent
 
             WriteHeader(sb, request, messages, invocations);
             WriteChanges(sb, request);
+            WriteReviews(sb, request);
             WriteTranscript(sb, request, messages, byId, resultBlocks);
 
             return sb.ToString();
@@ -195,6 +203,42 @@ namespace RhinoClaude.Agent
         private static string FormatBox(double[] box) => string.Format(CultureInfo.InvariantCulture,
             "({0:0.###}, {1:0.###}, {2:0.###}) → ({3:0.###}, {4:0.###}, {5:0.###})",
             box[0], box[1], box[2], box[3], box[4], box[5]);
+
+        // ── Review history ────────────────────────────────────────────
+
+        /// <summary>
+        /// Every verdict the reviewer reached, whether or not it travelled back through a tool
+        /// call. Without this a defensive review showed in the sidebar and left the exported
+        /// file claiming nothing had been reviewed at all.
+        /// </summary>
+        private static void WriteReviews(StringBuilder sb, ConversationExportRequest request)
+        {
+            var reviews = request.Reviews;
+            if (reviews == null || reviews.Count == 0) return;
+
+            sb.Append("## Review history").Append(Nl).Append(Nl);
+
+            foreach (var review in reviews.Where(r => r != null))
+            {
+                sb.Append("- **").Append(ReviewOutcome.VerdictString(review.Verdict)).Append("**");
+                sb.Append(review.Defensive
+                    ? " (automatic mid-turn check)"
+                    : " (cycle " + review.Cycle + ")");
+
+                if (!string.IsNullOrWhiteSpace(review.ModelId))
+                    sb.Append(" · `").Append(Inline(review.ModelId)).Append("`");
+
+                sb.Append(Nl);
+
+                if (!string.IsNullOrWhiteSpace(review.Notes))
+                    sb.Append("  - ").Append(Inline(review.Notes)).Append(Nl);
+
+                if (!string.IsNullOrWhiteSpace(review.QuestionForUser))
+                    sb.Append("  - Asked the user: ").Append(Inline(review.QuestionForUser)).Append(Nl);
+            }
+
+            sb.Append(Nl);
+        }
 
         // ── Transcript ────────────────────────────────────────────────
 

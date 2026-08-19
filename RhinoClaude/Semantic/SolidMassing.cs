@@ -127,9 +127,18 @@ namespace RhinoClaude.Semantic
     }
 
     /// <summary>
-    /// How <c>subdivide_face</c> is asked to divide a face. Three shapes, one union, same
-    /// pattern as <see cref="FaceSelector"/>: a cutting line given by two points, an existing
-    /// curve in the document, or a proportional split along the face's own axes.
+    /// How <c>subdivide_face</c> is asked to divide a face. Five shapes, one union, same
+    /// pattern as <see cref="FaceSelector"/>: one cutting line given by two points, several
+    /// lines applied together, an open polyline, existing curves in the document, or a
+    /// proportional split along the face's own axes.
+    ///
+    /// The multi-cut shapes exist because a single straight line cannot describe the roof of
+    /// anything but a box. Rhino's <c>BrepFace.Split</c> takes a collection of curves and
+    /// applies them at once, and the rule it enforces is about the collection, not its members:
+    /// no individual curve has to reach the face boundary, but together they have to divide the
+    /// face. An L-shaped gable is four cuts meeting at the ridge turning point — two ridge
+    /// segments, a hip out to the outside corner, a valley in to the inside corner — and not
+    /// one of the four crosses the face on its own.
     /// </summary>
     public sealed class FaceCut
     {
@@ -137,7 +146,14 @@ namespace RhinoClaude.Semantic
         public double[] LineStart { get; set; }
         public double[] LineEnd { get; set; }
 
+        /// <summary>Several straight cuts applied in one split. Each entry is {start, end}.</summary>
+        public List<double[][]> Lines { get; set; }
+
+        /// <summary>An open polyline of two or more points, cut as its constituent segments.</summary>
+        public List<double[]> PolylinePoints { get; set; }
+
         public string CuttingCurveId { get; set; }
+        public List<string> CuttingCurveIds { get; set; }
 
         /// <summary>0..1 along the face's own axis; 0.5 is the midline.</summary>
         public double? SplitRatio { get; set; }
@@ -145,13 +161,25 @@ namespace RhinoClaude.Semantic
         /// <summary>"u" cuts at constant u (the line runs along v); "v" is the other way.</summary>
         public string Direction { get; set; }
 
+        /// <summary>True when the cut is a set of segments rather than one line.</summary>
+        public bool IsMultiSegment =>
+            (Lines != null && Lines.Count > 0) || (PolylinePoints != null && PolylinePoints.Count >= 2);
+
         public bool IsEmpty =>
             LineStart == null && LineEnd == null
-            && string.IsNullOrWhiteSpace(CuttingCurveId) && SplitRatio == null;
+            && !IsMultiSegment
+            && string.IsNullOrWhiteSpace(CuttingCurveId)
+            && (CuttingCurveIds == null || CuttingCurveIds.Count == 0)
+            && SplitRatio == null;
 
         public override string ToString()
         {
+            if (CuttingCurveIds != null && CuttingCurveIds.Count > 0)
+                return "cuttingCurveIds=[" + string.Join(", ", CuttingCurveIds) + "]";
             if (!string.IsNullOrWhiteSpace(CuttingCurveId)) return "cuttingCurveId=" + CuttingCurveId;
+            if (PolylinePoints != null && PolylinePoints.Count >= 2)
+                return "polyline of " + PolylinePoints.Count + " points";
+            if (Lines != null && Lines.Count > 0) return Lines.Count + " lines";
             if (SplitRatio != null) return "splitRatio=" + SplitRatio + " along " + (Direction ?? "u");
             if (LineStart != null && LineEnd != null)
                 return "line=[" + string.Join(",", LineStart) + "]→[" + string.Join(",", LineEnd) + "]";
@@ -170,8 +198,37 @@ namespace RhinoClaude.Semantic
                 cut.LineEnd = Numbers(line, "endPoint");
             }
 
+            if (element.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
+            {
+                cut.Lines = new List<double[][]>();
+                foreach (var entry in lines.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object) continue;
+                    var start = Numbers(entry, "startPoint");
+                    var end = Numbers(entry, "endPoint");
+                    if (start != null && end != null) cut.Lines.Add(new[] { start, end });
+                }
+            }
+
+            if (element.TryGetProperty("polyline", out var polyline) && polyline.ValueKind == JsonValueKind.Array)
+            {
+                cut.PolylinePoints = polyline.EnumerateArray()
+                                             .Select(PointOf)
+                                             .Where(p => p != null)
+                                             .ToList();
+            }
+
             if (element.TryGetProperty("cuttingCurveId", out var curveId) && curveId.ValueKind == JsonValueKind.String)
                 cut.CuttingCurveId = curveId.GetString();
+
+            if (element.TryGetProperty("cuttingCurveIds", out var curveIds) && curveIds.ValueKind == JsonValueKind.Array)
+            {
+                cut.CuttingCurveIds = curveIds.EnumerateArray()
+                                              .Where(e => e.ValueKind == JsonValueKind.String)
+                                              .Select(e => e.GetString())
+                                              .Where(s => !string.IsNullOrWhiteSpace(s))
+                                              .ToList();
+            }
 
             if (element.TryGetProperty("splitRatio", out var ratio) && ratio.ValueKind == JsonValueKind.Number)
                 cut.SplitRatio = ratio.GetDouble();
@@ -180,6 +237,38 @@ namespace RhinoClaude.Semantic
                 cut.Direction = direction.GetString();
 
             return cut;
+        }
+
+        /// <summary>Every cut curve id the caller gave, in either the single or the list form.</summary>
+        public IEnumerable<string> AllCurveIds()
+        {
+            if (!string.IsNullOrWhiteSpace(CuttingCurveId)) yield return CuttingCurveId;
+            if (CuttingCurveIds == null) yield break;
+            foreach (var id in CuttingCurveIds)
+                if (!string.IsNullOrWhiteSpace(id)) yield return id;
+        }
+
+        /// <summary>The segment endpoints of the multi-cut forms, polyline expanded to pairs.</summary>
+        public IEnumerable<double[][]> AllSegments()
+        {
+            if (Lines != null)
+                foreach (var pair in Lines)
+                    if (pair != null && pair.Length >= 2 && pair[0] != null && pair[1] != null)
+                        yield return pair;
+
+            if (PolylinePoints == null) yield break;
+            for (int i = 0; i + 1 < PolylinePoints.Count; i++)
+                yield return new[] { PolylinePoints[i], PolylinePoints[i + 1] };
+        }
+
+        private static double[] PointOf(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array) return null;
+            var numbers = element.EnumerateArray()
+                                 .Where(e => e.ValueKind == JsonValueKind.Number)
+                                 .Select(e => e.GetDouble())
+                                 .ToArray();
+            return numbers.Length >= 2 ? numbers : null;
         }
 
         private static double[] Numbers(JsonElement element, string name)
@@ -196,18 +285,28 @@ namespace RhinoClaude.Semantic
         }
     }
 
-    /// <summary>The outcome of planning a cut — a line on the face's plane, or a reason there isn't one.</summary>
+    /// <summary>The outcome of planning a cut — the curves to split with, or a reason there aren't any.</summary>
     public sealed class CutLinePlan
     {
+        /// <summary>The single planned line. Also present as <see cref="Segments"/>[0].</summary>
         public Vec3 Start { get; set; }
         public Vec3 End { get; set; }
+
+        /// <summary>
+        /// Every straight cut to apply, in one split. A one-line cut leaves this holding a
+        /// single entry, so callers can read the list and ignore Start/End entirely.
+        /// </summary>
+        public List<EdgeSegment> Segments { get; } = new List<EdgeSegment>();
+
         /// <summary>Set instead of Start/End when the caller supplied a curve to cut with.</summary>
         public string CuttingCurveId { get; set; }
+        public List<string> CuttingCurveIds { get; } = new List<string>();
+
         public string Error { get; set; }
         public string Note { get; set; }
 
         public bool Resolved => Error == null;
-        public bool UsesCurve => !string.IsNullOrWhiteSpace(CuttingCurveId);
+        public bool UsesCurve => CuttingCurveIds.Count > 0;
 
         public static CutLinePlan Failed(string error) => new CutLinePlan { Error = error };
     }
@@ -238,12 +337,19 @@ namespace RhinoClaude.Semantic
                     "Use {cuttingCurveId} with a curve you have drawn on the face, or pick a planar face " +
                     "with get_mass_faces.");
 
-            if (!string.IsNullOrWhiteSpace(cut.CuttingCurveId))
-                return new CutLinePlan
+            var curveIds = cut.AllCurveIds().ToList();
+            if (curveIds.Count > 0)
+            {
+                var curvePlan = new CutLinePlan
                 {
-                    CuttingCurveId = cut.CuttingCurveId,
-                    Note = "The curve was projected onto the face along its normal before splitting."
+                    CuttingCurveId = curveIds[0],
+                    Note = curveIds.Count == 1
+                        ? "The curve was projected onto the face along its normal before splitting."
+                        : curveIds.Count + " curves were projected onto the face along its normal before splitting."
                 };
+                curvePlan.CuttingCurveIds.AddRange(curveIds);
+                return curvePlan;
+            }
 
             var frame = FaceFrame.For(face);
             if (!frame.IsValid)
@@ -252,6 +358,8 @@ namespace RhinoClaude.Semantic
 
             if (tolerance <= 0) tolerance = 1e-6;
             if (overshoot <= 0) overshoot = Math.Max(frame.Width, frame.Height) * 0.05;
+
+            if (cut.IsMultiSegment) return PlanSegments(face, cut, frame, tolerance, overshoot);
 
             Vec3 start, end;
             string note = null;
@@ -324,12 +432,108 @@ namespace RhinoClaude.Semantic
                 tMax = Math.Max(tMax, t);
             }
 
-            return new CutLinePlan
+            var plan = new CutLinePlan
             {
                 Start = start + direction3d * (tMin - overshoot),
                 End = start + direction3d * (tMax + overshoot),
                 Note = note
             };
+            plan.Segments.Add(new EdgeSegment(plan.Start, plan.End));
+            return plan;
+        }
+
+        /// <summary>
+        /// A set of cuts applied together. Deliberately *not* extended across the face the way a
+        /// single line is: the whole point of the multi-cut form is that each segment ends where
+        /// it is meant to, and a ridge stretched out to the bounding box would saw through the
+        /// gable wall it is supposed to stop at.
+        ///
+        /// The one exception is a free end — an endpoint no other segment shares — that already
+        /// sits on the face's boundary. Those are nudged outward by the overshoot, because a cut
+        /// landing a hair short of the edge leaves a sliver that fails the split for reasons the
+        /// caller cannot see.
+        /// </summary>
+        private static CutLinePlan PlanSegments(
+            FaceView face, FaceCut cut, FaceFrame frame, double tolerance, double overshoot)
+        {
+            var raw = new List<EdgeSegment>();
+
+            foreach (var pair in cut.AllSegments())
+            {
+                var a = frame.Project(ToVec(pair[0], frame.Origin.Z));
+                var b = frame.Project(ToVec(pair[1], frame.Origin.Z));
+
+                if (a.DistanceTo(b) <= tolerance) continue;
+                raw.Add(new EdgeSegment(a, b));
+            }
+
+            if (raw.Count == 0)
+                return CutLinePlan.Failed(
+                    "None of the cuts given has any length once projected onto face " + face.FaceId +
+                    ". Each segment needs two points that are apart in plan.");
+
+            var plan = new CutLinePlan();
+            int extended = 0;
+
+            foreach (var segment in raw)
+            {
+                var direction = (segment.End - segment.Start).Unit();
+                bool startFree = CountEndpointsAt(raw, segment.Start, tolerance) == 1;
+                bool endFree = CountEndpointsAt(raw, segment.End, tolerance) == 1;
+
+                bool nudgeStart = startFree && OnFrameBoundary(frame, segment.Start, tolerance);
+                bool nudgeEnd = endFree && OnFrameBoundary(frame, segment.End, tolerance);
+
+                var start = nudgeStart ? segment.Start - direction * overshoot : segment.Start;
+                var end = nudgeEnd ? segment.End + direction * overshoot : segment.End;
+
+                if (nudgeStart || nudgeEnd) extended++;
+                plan.Segments.Add(new EdgeSegment(start, end));
+            }
+
+            plan.Start = plan.Segments[0].Start;
+            plan.End = plan.Segments[0].End;
+
+            var notes = new List<string>
+            {
+                raw.Count + " cuts were applied together. They are used as given, not extended " +
+                "across the face — together they have to divide it, but no one of them has to " +
+                "reach the boundary on its own."
+            };
+
+            if (extended > 0)
+                notes.Add(extended + " of them had a loose end already on the face boundary, nudged " +
+                          "just past it so the split does not leave a sliver.");
+
+            plan.Note = string.Join(" ", notes);
+            return plan;
+        }
+
+        private static int CountEndpointsAt(List<EdgeSegment> segments, Vec3 point, double tolerance)
+        {
+            double slack = Math.Max(tolerance, 1e-9);
+            int count = 0;
+            foreach (var segment in segments)
+            {
+                if (segment.Start.DistanceTo(point) <= slack) count++;
+                if (segment.End.DistanceTo(point) <= slack) count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Whether a point sits on the edge of the face's measured extent. The frame is a
+        /// bounding box, so on a re-entrant face like an L this is true of the outer extent
+        /// only — which is the case worth nudging, and the inner corners are left alone.
+        /// </summary>
+        private static bool OnFrameBoundary(FaceFrame frame, Vec3 point, double tolerance)
+        {
+            double slack = Math.Max(tolerance, Math.Max(frame.Width, frame.Height) * 1e-6);
+            double u = frame.U(point);
+            double v = frame.V(point);
+
+            return Math.Abs(u) <= slack || Math.Abs(u - frame.Width) <= slack
+                || Math.Abs(v) <= slack || Math.Abs(v - frame.Height) <= slack;
         }
 
         /// <summary>Where a face sits, in the terms the error messages use.</summary>
@@ -486,6 +690,36 @@ namespace RhinoClaude.Semantic
             }
 
             return best;
+        }
+
+        /// <summary>
+        /// Candidates whose midpoint lies on one of the given lines. Used to tell the ridge
+        /// edges of a subdivision from the hip and valley edges cut at the same time: all of
+        /// them are new, and only the ones on the ridge get lifted.
+        /// </summary>
+        public static List<int> OnAnyLine(
+            IReadOnlyList<EdgeSegment> segments, IEnumerable<int> candidates,
+            IReadOnlyList<EdgeSegment> lines, double tolerance)
+        {
+            var found = new List<int>();
+            if (segments == null || candidates == null || lines == null) return found;
+
+            double slack = Math.Max(tolerance, 1e-6);
+
+            foreach (int index in candidates)
+            {
+                if (index < 0 || index >= segments.Count) continue;
+
+                var midpoint = segments[index].Midpoint;
+                foreach (var line in lines)
+                {
+                    if (DistanceToSegment(midpoint, line) > slack) continue;
+                    found.Add(index);
+                    break;
+                }
+            }
+
+            return found;
         }
 
         private static bool SameSegment(EdgeSegment a, EdgeSegment b, double tolerance) =>

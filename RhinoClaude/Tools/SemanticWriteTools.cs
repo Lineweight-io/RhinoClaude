@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -297,13 +298,17 @@ namespace RhinoClaude.Tools
         {
             Name = "subdivide_face",
             Description =
-                "Divide one face of a solid in two, keeping the solid closed. This is the move behind every " +
-                "feature that reshapes a mass rather than sitting on top of it: a gable ridge, a dormer, a " +
-                "stepped setback, a sloped roof. Split the face, then move_edge the edge the split created — " +
-                "the response returns its id ready to pass straight through. Cut it three ways: a line " +
-                "between two points in plan, an existing curve in the document, or a proportional split " +
-                "along the face's own axes (0.5 is the midline). The line is extended to the face's edges " +
-                "automatically, but it does have to cross the face — one that stops inside it divides nothing.",
+                "Divide one face of a solid, keeping the solid closed. This is the move behind every feature " +
+                "that reshapes a mass rather than sitting on top of it: a gable ridge, a dormer, a stepped " +
+                "setback, a sloped roof. Split the face, then move_edge the edges the split created — the " +
+                "response returns their ids ready to pass straight through. Cut it five ways: one line " +
+                "between two points, several lines applied together, an open polyline, existing curves in " +
+                "the document, or a proportional split along the face's own axes (0.5 is the midline). " +
+                "A single line is extended to the face's edges automatically and has to cross it. A set of " +
+                "cuts is used exactly as given and the rule applies to the set, not its members: no one cut " +
+                "has to reach the boundary, but together they have to divide the face. That is what an " +
+                "L-shaped roof needs — two ridge segments plus a cut out to the outside corner and one in " +
+                "to the inside corner, four cuts, none of which crosses the face alone.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""required"": [""massId"", ""faceSelector"", ""cut""],
@@ -312,18 +317,37 @@ namespace RhinoClaude.Tools
     ""faceSelector"": " + SemanticReadTools.FaceSelectorSchema + @",
     ""cut"": {
       ""type"": ""object"",
-      ""description"": ""How to divide the face. Exactly one of: {line}, {cuttingCurveId}, or {splitRatio, direction}."",
+      ""description"": ""How to divide the face. One of: {line}, {lines}, {polyline}, {cuttingCurveId} or {cuttingCurveIds}, or {splitRatio, direction}."",
       ""properties"": {
         ""line"": {
           ""type"": ""object"",
-          ""description"": ""Two points the cut runs between. Projected onto the face along its normal, so on a roof the z is optional."",
+          ""description"": ""One cut between two points. Extended to the face's edges automatically, so it must cross the face. Projected onto the face along its normal, so on a roof the z is optional."",
           ""properties"": {
             ""startPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
             ""endPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
           },
           ""additionalProperties"": false
         },
+        ""lines"": {
+          ""type"": ""array"", ""minItems"": 1,
+          ""description"": ""Several cuts applied in one split, used as given rather than extended. Together they must divide the face; individually they need not reach its boundary. This is the form an L-shaped or T-shaped roof needs."",
+          ""items"": {
+            ""type"": ""object"",
+            ""properties"": {
+              ""startPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
+              ""endPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
+            },
+            ""required"": [""startPoint"", ""endPoint""],
+            ""additionalProperties"": false
+          }
+        },
+        ""polyline"": {
+          ""type"": ""array"", ""minItems"": 2,
+          ""description"": ""An open polyline, cut as its segments. A bent ridge is two points plus the turning point."",
+          ""items"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
+        },
         ""cuttingCurveId"": { ""type"": ""string"", ""description"": ""An existing curve, projected onto the face before it cuts."" },
+        ""cuttingCurveIds"": { ""type"": ""array"", ""items"": { ""type"": ""string"" }, ""description"": ""Several existing curves, applied together in one split."" },
         ""splitRatio"": { ""type"": ""number"", ""description"": ""Strictly between 0 and 1. 0.5 is the midline."" },
         ""direction"": { ""type"": ""string"", ""enum"": [""u"", ""v""], ""default"": ""u"", ""description"": ""Which of the face's own axes splitRatio runs along. On a roof, u is east-west and v is north-south."" }
       },
@@ -386,24 +410,23 @@ namespace RhinoClaude.Tools
         {
             Name = "move_edge",
             Description =
-                "Translate one edge of a solid, letting the faces that meet it stretch to follow. This is the " +
-                "second half of a gable: subdivide_face the roof along the ridge, then lift the edge that " +
-                "created. Pass an edgeId straight from subdivide_face's newEdgeIds, or pick one by role — " +
-                "'roof-ridge', 'parapet', 'eave'. The raw form, brepId plus edgeIndex, still works on any Brep.",
+                "Translate one or more edges of a solid, letting the faces that meet them stretch to follow. " +
+                "This is the second half of a gable: subdivide_face the roof along the ridge, then lift the " +
+                "edges that created. Pass edgeIds straight from subdivide_face's newEdgeIds, or pick by role " +
+                "— 'roof-ridge', 'parapet', 'eave'. Edges that belong to the same feature must go in ONE " +
+                "call: an L-shaped ridge is two edges, and lifting them one at a time warps the roof faces " +
+                "between them instead of raising them. Use edgeSelectors for that; the response reports " +
+                "allFacesPlanar so you can tell. The raw form, brepId plus edgeIndex, still works on any Brep.",
             InputSchemaJson = @"{
   ""type"": ""object"",
   ""required"": [""distance""],
   ""properties"": {
-    ""massId"": { ""type"": ""string"", ""description"": ""The mass to edit. Use with edgeSelector."" },
-    ""edgeSelector"": {
-      ""type"": ""object"",
-      ""description"": ""How to pick the edge. One of {edgeId} — including one returned by subdivide_face — {edgeIndex}, or {role}."",
-      ""properties"": {
-        ""edgeId"": { ""type"": ""string"" },
-        ""edgeIndex"": { ""type"": ""integer"" },
-        ""role"": { ""type"": ""string"", ""enum"": [""parapet"",""outside-corner"",""inside-corner"",""roof-ridge"",""eave"",""other""] }
-      },
-      ""additionalProperties"": false
+    ""massId"": { ""type"": ""string"", ""description"": ""The mass to edit. Use with edgeSelector or edgeSelectors."" },
+    ""edgeSelector"": " + EdgeSelectorSchema + @",
+    ""edgeSelectors"": {
+      ""type"": ""array"", ""minItems"": 1,
+      ""description"": ""Several edges moved together in one transform. Required whenever the edges form one feature — a bent ridge, a stepped eave — because moving them separately warps the faces spanning them."",
+      ""items"": " + EdgeSelectorSchema + @"
     },
     ""brepId"": { ""type"": ""string"", ""description"": ""Raw form: any Brep in the document. Use with edgeIndex."" },
     ""edgeIndex"": { ""type"": ""integer"", ""minimum"": 0, ""description"": ""Raw form: edge index from get_object with includeSubobjects."" },
@@ -425,33 +448,76 @@ namespace RhinoClaude.Tools
                         ToolInput.DoubleList(input, "directionVector").ToArray(),
                         ToolInput.RequireDouble(input, "distance")));
 
+                var selectors = new List<EdgeSelector>();
+                if (ToolInput.TryGet(input, "edgeSelectors", out var many)
+                    && many.ValueKind == JsonValueKind.Array)
+                    selectors.AddRange(many.EnumerateArray().Select(EdgeSelector.Parse));
+                if (ToolInput.TryGet(input, "edgeSelector", out var one))
+                    selectors.Add(EdgeSelector.Parse(one));
+
+                if (selectors.Count == 0)
+                    throw new ArgumentException(
+                        "Give edgeSelector for one edge, or edgeSelectors for several that move together.");
+
                 return ToolResult.Ok(mutation.MoveEdge(
                     ToolInput.RequireString(input, "massId"),
-                    EdgeSelector.Parse(ToolInput.Require(input, "edgeSelector")),
+                    selectors,
                     ToolInput.String(input, "direction"),
                     ToolInput.DoubleList(input, "directionVector").ToArray(),
                     ToolInput.RequireDouble(input, "distance")));
             }
         };
 
+        /// <summary>Shared by move_edge's single and list forms so the two cannot drift apart.</summary>
+        private const string EdgeSelectorSchema = @"{
+      ""type"": ""object"",
+      ""description"": ""How to pick an edge. One of {edgeId} — including one returned by subdivide_face — {edgeIndex}, or {role}."",
+      ""properties"": {
+        ""edgeId"": { ""type"": ""string"" },
+        ""edgeIndex"": { ""type"": ""integer"" },
+        ""role"": { ""type"": ""string"", ""enum"": [""parapet"",""outside-corner"",""inside-corner"",""roof-ridge"",""eave"",""other""] }
+      },
+      ""additionalProperties"": false
+    }";
+
         private static ToolDefinition CreateGableRoof(SemanticMutationService mutation) => new ToolDefinition
         {
             Name = "create_gable_roof",
             Description =
-                "Turn a flat-topped mass into a gable in one move: the top face is split along the ridge line " +
-                "and the new edge is raised by pitchHeight, leaving one closed solid rather than two planes " +
-                "resting on a box. Give the ridge as two points in plan — for a rectangular footprint that is " +
-                "usually the midline of the long direction, running the full length. The ridge has to cross " +
-                "the roof; if it does not, nothing is changed and the error says where the roof actually is. " +
-                "For anything more elaborate — a hip, a dormer, a monopitch — compose subdivide_face and " +
-                "move_edge yourself.",
+                "Turn a flat-topped mass into a gable in one move and one undo record: the top face is split " +
+                "along the ridge and the new edges are raised together by pitchHeight, leaving one closed " +
+                "solid rather than planes resting on a box. On a rectangular footprint give the ridge as two " +
+                "points, usually the midline of the long direction running the full length. On an L or a T " +
+                "the ridge bends: give ridgePoints through the turning point, and pass additionalCuts from " +
+                "that turning point out to the outside corner and in to the inside corner. Those two extra " +
+                "cuts are not decoration — without them the roof planes have no straight boundary to sit on " +
+                "and come back warped. The response reports allFacesPlanar, which is the test of whether the " +
+                "roof is right.",
             InputSchemaJson = @"{
   ""type"": ""object"",
-  ""required"": [""massId"", ""ridgeLineStart"", ""ridgeLineEnd"", ""pitchHeight""],
+  ""required"": [""massId"", ""pitchHeight""],
   ""properties"": {
     ""massId"": { ""type"": ""string"" },
-    ""ridgeLineStart"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3, ""description"": ""[x, y] in plan; z is ignored — the line is projected onto the top face."" },
-    ""ridgeLineEnd"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
+    ""ridgeLineStart"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3, ""description"": ""Straight ridge, first point. [x, y] in plan; z is ignored — the ridge is projected onto the top face."" },
+    ""ridgeLineEnd"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3, ""description"": ""Straight ridge, second point."" },
+    ""ridgePoints"": {
+      ""type"": ""array"", ""minItems"": 2,
+      ""description"": ""A bent ridge, in order. Use instead of ridgeLineStart/End on an L or T plan: the ends run to the middle of each gable wall and the middle point is where the wings meet."",
+      ""items"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
+    },
+    ""additionalCuts"": {
+      ""type"": ""array"",
+      ""description"": ""Extra cuts made with the ridge but NOT raised — the hip line from the ridge turning point out to the outside corner, and the valley line in to the inside corner. Required for a bent ridge."",
+      ""items"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""startPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 },
+          ""endPoint"": { ""type"": ""array"", ""items"": { ""type"": ""number"" }, ""minItems"": 2, ""maxItems"": 3 }
+        },
+        ""required"": [""startPoint"", ""endPoint""],
+        ""additionalProperties"": false
+      }
+    },
     ""pitchHeight"": { ""type"": ""number"", ""description"": ""How far the ridge rises above the existing top face, in model units."" },
     ""faceSelector"": " + SemanticReadTools.FaceSelectorSchema + @"
   },
@@ -463,14 +529,53 @@ namespace RhinoClaude.Tools
                     ? FaceSelector.Parse(face)
                     : null;
 
+                var ridge = new List<double[]>();
+                if (ToolInput.TryGet(input, "ridgePoints", out var points)
+                    && points.ValueKind == JsonValueKind.Array)
+                {
+                    ridge.AddRange(points.EnumerateArray()
+                                         .Select(PointArray)
+                                         .Where(p => p != null));
+                }
+                else
+                {
+                    ridge.Add(ToolInput.DoubleList(input, "ridgeLineStart").ToArray());
+                    ridge.Add(ToolInput.DoubleList(input, "ridgeLineEnd").ToArray());
+                }
+
+                List<double[][]> extra = null;
+                if (ToolInput.TryGet(input, "additionalCuts", out var cuts)
+                    && cuts.ValueKind == JsonValueKind.Array)
+                {
+                    extra = cuts.EnumerateArray()
+                                .Select(c => new[] { PointArray(c, "startPoint"), PointArray(c, "endPoint") })
+                                .Where(pair => pair[0] != null && pair[1] != null)
+                                .ToList();
+                }
+
                 return ToolResult.Ok(mutation.CreateGableRoof(
                     ToolInput.RequireString(input, "massId"),
-                    ToolInput.DoubleList(input, "ridgeLineStart").ToArray(),
-                    ToolInput.DoubleList(input, "ridgeLineEnd").ToArray(),
+                    ridge,
                     ToolInput.RequireDouble(input, "pitchHeight"),
-                    selector));
+                    selector,
+                    extra));
             }
         };
+
+        private static double[] PointArray(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array) return null;
+            var numbers = element.EnumerateArray()
+                                 .Where(e => e.ValueKind == JsonValueKind.Number)
+                                 .Select(e => e.GetDouble())
+                                 .ToArray();
+            return numbers.Length >= 2 ? numbers : null;
+        }
+
+        private static double[] PointArray(JsonElement element, string name) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
+                ? PointArray(value)
+                : null;
 
         private static ToolDefinition PromoteOpeningToEntry(SemanticMutationService mutation) => new ToolDefinition
         {

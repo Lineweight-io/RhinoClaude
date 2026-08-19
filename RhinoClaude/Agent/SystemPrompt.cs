@@ -131,6 +131,15 @@ the edge that returns. It is not two planes built over the box, and it is not a 
 swept between edges. The test is whether the result is still one closed solid afterwards — if
 it is not, the move was the wrong one.
 
+Staying closed is necessary but not sufficient. A roof whose planes had to warp is still one
+solid and still measures fine; it just looks wrong. move_edge and create_gable_roof will not
+make that trade for you: a move that would open the solid, or bend a face that was flat, is
+refused outright and nothing is written. Such an error is not damage to repair — the mass is
+left exactly as it was, so the face and edge indices you already hold are still valid. Reissue
+the same move with every edge of the feature in edgeSelectors, or with the cut the form was
+missing added to additionalCuts. A face that stopped being planar always means one of those two.
+subdivide_face still reports allFacesPlanar for the cuts it can leave standing. See pattern 1a.
+
 ### Common Massing Patterns
 
 The following patterns show how to compose the primitive tools to build recurring architectural
@@ -148,6 +157,34 @@ create_gable_roof(massId, ridgeLineStart, ridgeLineEnd, pitchHeight) for the sta
 is the one shipped composite and it undoes as a single action. To vary it, subdivide_face on
 {role: ""roof""} with {line: {startPoint, endPoint}} along the intended ridge, then move_edge on
 the returned newEdgeIds[0] with direction ""+z"" and the pitch height as the distance.
+
+**1a. Gable roof on an L, T or U plan.** The case that goes wrong most, and it goes wrong the
+same way every time: treated as a rectangular gable it produces two warped surfaces instead of
+four flat roof planes. Three facts drive the recipe.
+
+*The ridge bends.* On an L it is two segments meeting over the point where the wings cross —
+for a footprint 60 wide (y 0..30) with a 30-wide wing running north (x 0..30), the wing centre
+lines are y = 15 and x = 15, so the ridge runs (60,15) → (15,15) → (15,50). Each end lands at
+the middle of a gable wall.
+
+*Two more cuts are needed, and they are not part of the ridge.* From the turning point, one cut
+runs out to the outside corner — (15,15) → (0,0), the hip — and one runs in to the inside
+corner — (15,15) → (30,30), the valley. These give each roof plane a straight edge to sit on.
+Skip them and the geometry cannot be flat, whatever else you do right.
+
+*Everything that rises, rises at once.* The two ridge segments are two edges. Lift them in ONE
+move_edge call via edgeSelectors. Lifting one and then the other tears the roof, because the
+faces spanning both have to bend to reach the half still at eave level.
+
+So either create_gable_roof with ridgePoints for the ridge and additionalCuts for the hip and
+valley, or subdivide_face with cut {polyline: [...ridge...], lines: [...hip, valley...]} in a
+single call, then one move_edge with both returned ridge edge ids. Do not lift the hip or valley
+edges. Check allFacesPlanar in the response: true means four flat planes, false means the cut
+set was incomplete. A T plan is the same with two valleys; a U is two L's sharing a wing.
+
+Cuts work as a set, not one at a time. No individual cut has to reach the face boundary — the
+ridge segments do not — but together they must divide the face, which is why they all go into
+one subdivide_face call.
 
 **2. Shed / single-slope roof.** One plane sloping the whole way across, high on one side. On a
 box no subdivision is needed: move_edge on the top edge of the high side, direction ""+z"",

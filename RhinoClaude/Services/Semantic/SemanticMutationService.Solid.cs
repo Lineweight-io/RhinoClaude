@@ -88,6 +88,7 @@ namespace RhinoClaude.Services.Semantic
                     { "piecesFromFace", fragmentCount },
                     { "topologyChanged", true },
                     { "isSolid", edited.IsSolid },
+                    { "allFacesPlanar", NonPlanarFaceCount(edited, tolerance) == 0 },
                     { "newBbox", SemanticClassifier.ToBox(edited.GetBoundingBox(true)).ToJson() },
                     { "notes", Join(notes,
                         newEdgeIds.Count == 0
@@ -163,10 +164,11 @@ namespace RhinoClaude.Services.Semantic
         /// of the gable move: subdivide the roof, then lift the edge the subdivision made.
         /// </summary>
         public object MoveEdge(
-            string massId, EdgeSelector selector, string directionName, double[] directionVector, double distance)
+            string massId, IReadOnlyList<EdgeSelector> selectors, string directionName,
+            double[] directionVector, double distance)
         {
             var mass = RequireMass(massId);
-            var edge = ResolveEdge(mass, selector);
+            var edges = ResolveEdges(mass, selectors);
             var notes = new List<string>();
 
             if (Math.Abs(distance) <= RhinoMath.ZeroTolerance)
@@ -186,21 +188,40 @@ namespace RhinoClaude.Services.Semantic
                 double tolerance = doc.ModelAbsoluteTolerance;
                 var brep = RequireBrep(doc, objectId);
 
-                if (edge.EdgeIndex < 0 || edge.EdgeIndex >= brep.Edges.Count)
-                    throw new ArgumentException(
-                        "Edge index " + edge.EdgeIndex + " is no longer valid on this Brep — it has " +
-                        brep.Edges.Count + " edges. Call get_mass_edges again; indices change whenever the " +
-                        "solid is edited.");
+                foreach (var edge in edges)
+                    if (edge.EdgeIndex < 0 || edge.EdgeIndex >= brep.Edges.Count)
+                        throw new ArgumentException(
+                            "Edge index " + edge.EdgeIndex + " is no longer valid on this Brep — it has " +
+                            brep.Edges.Count + " edges. Call get_mass_edges again; indices change whenever " +
+                            "the solid is edited.");
 
                 bool wasSolid = brep.IsSolid;
+                int warpedBefore = NonPlanarFaceCount(brep, tolerance);
 
-                var edited = TranslateComponent(
-                    brep, brep.Edges[edge.EdgeIndex].ComponentIndex(),
-                    direction * distance, tolerance, "edge", notes);
+                var components = edges.Select(e => brep.Edges[e.EdgeIndex].ComponentIndex()).ToList();
 
+                var edited = TranslateComponents(
+                    brep, components, direction * distance, tolerance,
+                    edges.Count == 1 ? "edge" : "edges", notes);
+
+                // Damage is rejected, not reported. Replacing the mass and then telling the caller
+                // to undo leaves it holding geometry it has to repair before it can retry, and the
+                // repair is the part that goes wrong. Nothing is written unless the move is clean.
                 if (wasSolid && !edited.IsSolid)
-                    notes.Add("The mass was a closed solid before this move and is not one now. Undo and try " +
-                              "a smaller distance, or a different edge.");
+                    throw new InvalidOperationException(
+                        "That move would open the solid — the mass was closed before it and would not be " +
+                        "after. Nothing was changed. Try a smaller distance, or a different edge.");
+
+                // A face that warped is the signature of a partly-moved ridge: the edges that
+                // needed to travel together did not, so the faces spanning them had to bend.
+                int warped = NonPlanarFaceCount(edited, tolerance) - warpedBefore;
+                if (warped > 0)
+                    throw new InvalidOperationException(
+                        warped + " face(s) would stop being planar, so nothing was changed. On a massing " +
+                        "model that means the edges around them have to move together and did not — an " +
+                        "L-shaped ridge is two edges, and both belong in one move_edge call. Reissue this " +
+                        "move with every edge of the feature in edgeSelectors; the indices you already " +
+                        "have are still valid, because the mass was left untouched.");
 
                 if (!doc.Objects.Replace(objectId, edited))
                     throw new InvalidOperationException("Rhino refused to replace the mass with the edited Brep.");
@@ -208,14 +229,15 @@ namespace RhinoClaude.Services.Semantic
                 return (object)new Dictionary<string, object>
                 {
                     { "resultMassId", mass.ElementId },
-                    { "edgeId", edge.EdgeId },
-                    { "edgeRole", edge.Role },
+                    { "edgeIds", edges.Select(e => e.EdgeId).ToList() },
+                    { "edgeRoles", edges.Select(e => e.Role).Distinct().ToList() },
                     { "direction", new[] { Round(direction.X), Round(direction.Y), Round(direction.Z) } },
                     { "distance", Round(distance) },
-                    { "movedEdge", DescribeEdge(edited, edge.EdgeIndex) },
+                    { "movedEdges", edges.Select(e => DescribeEdge(edited, e.EdgeIndex)).ToList() },
                     { "newVolume", Round(Measure(edited)) },
                     { "newBbox", SemanticClassifier.ToBox(edited.GetBoundingBox(true)).ToJson() },
                     { "isSolid", edited.IsSolid },
+                    { "allFacesPlanar", NonPlanarFaceCount(edited, tolerance) == 0 },
                     { "notes", Join(notes, "Face and edge indices on this mass have changed — call " +
                                            "get_mass_edges again before the next edge operation.") }
                 };
@@ -233,7 +255,8 @@ namespace RhinoClaude.Services.Semantic
         /// that comes up most, so the agent does not have to get all three right in a row.
         /// </summary>
         public object CreateGableRoof(
-            string massId, double[] ridgeStart, double[] ridgeEnd, double pitchHeight, FaceSelector selector)
+            string massId, List<double[]> ridgePoints, double pitchHeight, FaceSelector selector,
+            List<double[][]> additionalCuts)
         {
             var context = ResolveTopFace(massId, selector);
             var notes = new List<string>();
@@ -243,19 +266,28 @@ namespace RhinoClaude.Services.Semantic
                 throw new ArgumentException("pitchHeight must be non-zero — it is how far the ridge rises " +
                                             "above the face it was cut from.");
 
-            if (ridgeStart == null || ridgeStart.Length < 2 || ridgeEnd == null || ridgeEnd.Length < 2)
+            if (ridgePoints == null || ridgePoints.Count < 2 || ridgePoints.Any(p => p == null || p.Length < 2))
                 throw new ArgumentException(
-                    "ridgeLineStart and ridgeLineEnd are both required, each [x, y] or [x, y, z] in plan. " +
-                    "The z is ignored — the ridge line is projected onto the top face.");
+                    "A ridge of at least two points is required — ridgeLineStart and ridgeLineEnd for a " +
+                    "straight ridge, or ridgePoints for a bent one. Each is [x, y] or [x, y, z] in plan; " +
+                    "the z is ignored, because the ridge is projected onto the top face.");
 
-            var cut = new FaceCut { LineStart = ridgeStart, LineEnd = ridgeEnd };
+            var cut = new FaceCut { PolylinePoints = ridgePoints, Lines = additionalCuts };
             var plan = FaceCutPlanner.Plan(context.Face, cut, Doc.ModelAbsoluteTolerance, Units.Length(1.0));
 
             if (!plan.Resolved)
                 throw new ArgumentException(
-                    "The ridge line will not work on face " + context.Face.FaceId + ". " + plan.Error +
-                    " A gable needs a ridge that runs right across the roof — for a rectangular plan that is " +
-                    "usually the midline of the long direction.");
+                    "The ridge will not work on face " + context.Face.FaceId + ". " + plan.Error);
+
+            // The ridge as given, unextended, so the edges lying on it can be told apart from the
+            // hip and valley edges the same split creates.
+            // Qualified: the service already has a FaceFrame(FaceView) member of its own.
+            var frame = RhinoClaude.Semantic.FaceFrame.For(context.Face);
+            var ridgeLines = new List<EdgeSegment>();
+            for (int i = 0; i + 1 < ridgePoints.Count; i++)
+                ridgeLines.Add(new EdgeSegment(
+                    frame.Project(ToVec3(ridgePoints[i], frame.Origin.Z)),
+                    frame.Project(ToVec3(ridgePoints[i + 1], frame.Origin.Z))));
 
             var result = _mutation.RunComposite("create_gable_roof", doc =>
             {
@@ -264,6 +296,7 @@ namespace RhinoClaude.Services.Semantic
                 RequireFaceIndex(brep, context.Face.FaceIndex);
 
                 bool wasSolid = brep.IsSolid;
+                int warpedBefore = NonPlanarFaceCount(brep, tolerance);
                 double ridgeElevation = context.Face.ElevationMax + pitchHeight;
 
                 var before = EdgeSegments(brep);
@@ -274,39 +307,61 @@ namespace RhinoClaude.Services.Semantic
 
                 if (fragmentCount < 2)
                     throw new InvalidOperationException(
-                        "The ridge line did not divide the top face. Give a line that crosses it from one " +
-                        "side to the other.");
+                        "The ridge did not divide the top face. The cuts have to divide it between them — a " +
+                        "single ridge has to run right across, and a bent ridge on an L needs the hip and " +
+                        "valley cuts passed as additionalCuts to close the division off.");
 
                 var after = EdgeSegments(split);
                 var diff = EdgeTopologyDiff.Compare(before, after, Math.Max(tolerance, 1e-6));
 
-                int? ridgeIndex = EdgeTopologyDiff.NearestToLine(
-                    after, diff.NewIndices, plan.Start, plan.End);
+                var ridgeIndices = EdgeTopologyDiff.OnAnyLine(
+                    after, diff.NewIndices, ridgeLines, Math.Max(tolerance * 10, 1e-5));
 
-                if (ridgeIndex == null)
+                if (ridgeIndices.Count == 0)
                     throw new InvalidOperationException(
-                        "The split produced no new edge to raise, so there is no ridge to move. Nothing was " +
-                        "changed. Try subdivide_face on its own to see what the cut did.");
+                        "The split produced no new edge lying on the ridge, so there is nothing to raise. " +
+                        "Nothing was changed. Try subdivide_face on its own to see what the cut did.");
 
-                if (diff.NewIndices.Count > 1)
-                    notes.Add("The cut created " + diff.NewIndices.Count + " new edges; the one lying on the " +
-                              "ridge line was raised and the others were left alone.");
+                if (ridgeIndices.Count < ridgePoints.Count - 1)
+                    notes.Add("The ridge was given as " + (ridgePoints.Count - 1) + " segments but only " +
+                              ridgeIndices.Count + " matching edge(s) came back from the split. Check the " +
+                              "result before building on it.");
 
-                var edited = TranslateComponent(
-                    split, split.Edges[ridgeIndex.Value].ComponentIndex(),
-                    new Vector3d(0, 0, 1) * pitchHeight, tolerance, "ridge edge", notes);
+                int otherNew = diff.NewIndices.Count - ridgeIndices.Count;
+                if (otherNew > 0)
+                    notes.Add("The cut also created " + otherNew + " edge(s) away from the ridge — the hip " +
+                              "and valley lines. They stay at eave level, which is what makes the roof " +
+                              "planes come out flat.");
 
+                // Every ridge segment moves in one transform. Lifting them one at a time is what
+                // warps an L-shaped roof instead of raising it.
+                var edited = TranslateComponents(
+                    split, ridgeIndices.Select(i => split.Edges[i].ComponentIndex()).ToList(),
+                    new Vector3d(0, 0, 1) * pitchHeight, tolerance, "ridge edges", notes);
+
+                // Same contract as move_edge: a gable that damages the mass is refused outright
+                // rather than written and flagged, so a failed attempt costs the caller nothing
+                // and it can retry against the mass it already knows.
                 if (wasSolid && !edited.IsSolid)
-                    notes.Add("The mass was closed before the gable and is not now. Undo and try a smaller " +
-                              "pitchHeight.");
+                    throw new InvalidOperationException(
+                        "The gable would open the solid — the mass was closed before it and would not be " +
+                        "after. Nothing was changed. Try a smaller pitchHeight.");
+
+                int warpedNow = NonPlanarFaceCount(edited, tolerance);
+                if (warpedNow - warpedBefore > 0)
+                    throw new InvalidOperationException(
+                        (warpedNow - warpedBefore) + " roof face(s) would come out non-planar, so nothing " +
+                        "was changed. An L or T plan needs a cut from the ridge turning point out to the " +
+                        "outside corner and in to the inside corner; without them the roof planes have to " +
+                        "bend. Pass them as additionalCuts and call create_gable_roof again.");
 
                 if (!doc.Objects.Replace(context.ObjectId, edited))
                     throw new InvalidOperationException("Rhino refused to replace the mass with the gabled Brep.");
 
-                int ridgeAfter = ridgeIndex.Value;
-                var slopeFaceIds = (ridgeAfter < edited.Edges.Count
-                        ? SafeAdjacentFaces(edited.Edges[ridgeAfter])
-                        : new int[0])
+                var slopeFaceIds = ridgeIndices
+                    .Where(i => i < edited.Edges.Count)
+                    .SelectMany(i => SafeAdjacentFaces(edited.Edges[i]))
+                    .Distinct()
                     .Select(i => MassGeometryAnalyzer.FaceId(context.Mass.ElementId, i))
                     .ToList();
 
@@ -314,14 +369,16 @@ namespace RhinoClaude.Services.Semantic
                 {
                     { "resultMassId", context.Mass.ElementId },
                     { "roofFaceId", context.Face.FaceId },
-                    { "ridgeEdgeId", MassGeometryAnalyzer.EdgeId(context.Mass.ElementId, ridgeAfter) },
-                    { "ridgeLine", DescribeEdge(edited, ridgeAfter) },
+                    { "ridgeEdgeIds", ridgeIndices
+                        .Select(i => MassGeometryAnalyzer.EdgeId(context.Mass.ElementId, i)).ToList() },
+                    { "ridgeLines", ridgeIndices.Select(i => DescribeEdge(edited, i)).ToList() },
                     { "ridgeElevation", Round(ridgeElevation) },
                     { "pitchHeight", Round(pitchHeight) },
                     { "slopeFaceIds", slopeFaceIds },
                     { "newVolume", Round(Measure(edited)) },
                     { "newBbox", SemanticClassifier.ToBox(edited.GetBoundingBox(true)).ToJson() },
                     { "isSolid", edited.IsSolid },
+                    { "allFacesPlanar", warpedNow == 0 },
                     { "notes", Join(notes, "One closed solid, not a roof laid on a box: describe_massing " +
                                            "still reads it as a single mass, and the ridge comes back from " +
                                            "get_mass_edges with role 'roof-ridge'.") }
@@ -331,6 +388,9 @@ namespace RhinoClaude.Services.Semantic
             Invalidate();
             return result;
         }
+
+        private static Vec3 ToVec3(double[] values, double fallbackZ) =>
+            new Vec3(values[0], values[1], values.Length >= 3 ? values[2] : fallbackZ);
 
         /// <summary>
         /// The raw shape of move_face and move_edge: a Brep id and a component index, on any
@@ -394,31 +454,41 @@ namespace RhinoClaude.Services.Semantic
             };
         }
 
-        private EdgeView ResolveEdge(MassView mass, EdgeSelector selector)
+        /// <summary>
+        /// The edges a move applies to. Several selectors resolve to several edges and they all
+        /// move together; a single selector matching several edges is the ambiguous case, and
+        /// there the longest still wins so "move the ridge" keeps working on a simple mass.
+        /// </summary>
+        private List<EdgeView> ResolveEdges(MassView mass, IReadOnlyList<EdgeSelector> selectors)
         {
             var geometry = _registry.GeometryFor(mass);
             if (geometry == null)
                 throw new InvalidOperationException("Could not analyse the geometry of mass " + mass.ElementId + ".");
 
-            if (selector == null || selector.IsEmpty)
+            var given = (selectors ?? new EdgeSelector[0]).Where(s => s != null && !s.IsEmpty).ToList();
+            if (given.Count == 0)
                 throw new ArgumentException(
                     "An edgeSelector is required. Give one of: {edgeId} — including one returned by " +
-                    "subdivide_face — {edgeIndex}, or {role}.");
+                    "subdivide_face — {edgeIndex}, or {role}. Pass edgeSelectors as a list to move several " +
+                    "edges together, which is what an L-shaped or bent ridge needs.");
 
-            var matches = EdgeSelector.ResolveAll(geometry, new[] { selector });
+            var matches = EdgeSelector.ResolveAll(geometry, given);
             if (matches.Count == 0)
             {
                 var roles = geometry.Edges.Select(e => e.Role).Distinct().OrderBy(r => r, StringComparer.Ordinal);
                 throw new ArgumentException(
-                    "No edge on mass " + mass.ElementId + " matches " + selector + ". This mass has " +
+                    "No edge on mass " + mass.ElementId + " matches " +
+                    string.Join(" or ", given.Select(s => s.ToString())) + ". This mass has " +
                     geometry.Edges.Count + " edges with roles [" + string.Join(", ", roles) + "]. Call " +
                     "get_mass_edges for the current ids — they change whenever the solid is edited.");
             }
 
-            if (matches.Count > 1)
-                return matches.OrderByDescending(e => e.Length).First();
+            // One selector that caught a crowd is a guess, not an instruction: narrow it to the
+            // longest. Several selectors are an explicit set and are taken as given.
+            if (given.Count == 1 && matches.Count > 1)
+                return new List<EdgeView> { matches.OrderByDescending(e => e.Length).First() };
 
-            return matches[0];
+            return matches;
         }
 
         private static Vector3d ResolveDirection(
@@ -486,8 +556,11 @@ namespace RhinoClaude.Services.Semantic
             fragmentCount = fragments.Faces.Count;
             if (fragmentCount < 2)
                 throw new InvalidOperationException(
-                    "The cut did not divide the face — it came back in one piece. The line has to cross the " +
-                    "face from one edge to the other; a line that stops inside it splits nothing.");
+                    "The cut did not divide the face — it came back in one piece, from " + cutters.Count +
+                    " cutting curve(s). The rule is about the set, not each curve: together they have to " +
+                    "separate the face into pieces. One line has to cross it from edge to edge. Several cuts " +
+                    "have to meet each other end to end and reach the boundary at both ends of the chain — " +
+                    "an L-shaped ridge divides nothing until the hip and valley cuts join it to the corners.");
 
             var shell = brep.DuplicateBrep();
             shell.Faces.RemoveAt(faceIndex);
@@ -514,45 +587,77 @@ namespace RhinoClaude.Services.Semantic
             return result;
         }
 
-        /// <summary>The curves the split runs on, on the face's plane whichever way they were given.</summary>
+        /// <summary>
+        /// The curves the split runs on, on the face's plane whichever way they were given.
+        /// All of them go into one <c>BrepFace.Split</c> call, which is what lets a set of cuts
+        /// divide a face that no single member of the set crosses.
+        /// </summary>
         private List<Curve> BuildCutters(
             RhinoDoc doc, Brep brep, FaceView face, CutLinePlan plan, double tolerance)
         {
             if (!plan.UsesCurve)
-                return new List<Curve>
+                return plan.Segments
+                    .Select(s => (Curve)new LineCurve(
+                        SemanticClassifier.ToPoint(s.Start), SemanticClassifier.ToPoint(s.End)))
+                    .ToList();
+
+            var cutters = new List<Curve>();
+            var plane = PlaneOf(face);
+
+            foreach (string curveId in plan.CuttingCurveIds)
+            {
+                var obj = _query.RequireObject(curveId);
+                var curve = obj.Geometry as Curve;
+                if (curve == null)
+                    throw new ArgumentException(
+                        "Object " + curveId + " is a " + obj.ObjectType + ", not a curve.");
+
+                var projected = Curve.ProjectToPlane(curve, plane);
+                if (projected != null)
                 {
-                    new LineCurve(SemanticClassifier.ToPoint(plan.Start), SemanticClassifier.ToPoint(plan.End))
-                };
+                    cutters.Add(projected);
+                    continue;
+                }
 
-            var obj = _query.RequireObject(plan.CuttingCurveId);
-            var curve = obj.Geometry as Curve;
-            if (curve == null)
+                var pulled = curve.PullToBrepFace(brep.Faces[face.FaceIndex], tolerance);
+                if (pulled != null && pulled.Length > 0)
+                {
+                    cutters.AddRange(pulled);
+                    continue;
+                }
+
                 throw new ArgumentException(
-                    "Object " + plan.CuttingCurveId + " is a " + obj.ObjectType + ", not a curve.");
+                    "Curve " + curveId + " could not be projected onto face " + face.FaceId +
+                    ". Draw it over the face in plan, or use {line: {startPoint, endPoint}} instead.");
+            }
 
-            var projected = Curve.ProjectToPlane(curve, PlaneOf(face));
-            if (projected != null) return new List<Curve> { projected };
-
-            var pulled = curve.PullToBrepFace(brep.Faces[face.FaceIndex], tolerance);
-            if (pulled != null && pulled.Length > 0) return pulled.ToList();
-
-            throw new ArgumentException(
-                "Curve " + plan.CuttingCurveId + " could not be projected onto face " + face.FaceId +
-                ". Draw it over the face in plan, or use {line: {startPoint, endPoint}} instead.");
+            return cutters;
         }
 
-        /// <summary>
-        /// Translate one Brep component, letting the neighbours follow. The same
-        /// <c>TransformComponent</c> call Rhino's own MoveFace and MoveEdge make.
-        /// </summary>
         private static Brep TranslateComponent(
             Brep brep, ComponentIndex component, Vector3d translation, double tolerance,
+            string what, List<string> notes) =>
+            TranslateComponents(brep, new[] { component }, translation, tolerance, what, notes);
+
+        /// <summary>
+        /// Translate Brep components, letting the neighbours follow. The same
+        /// <c>TransformComponent</c> call Rhino's own MoveFace and MoveEdge make.
+        ///
+        /// Moving several components in one call is not a convenience — it is the difference
+        /// between a gable and a torn roof. An L-shaped ridge is two edges meeting at a corner,
+        /// and each of the four faces around them touches both. Lift one edge and the faces that
+        /// span the pair have to warp to reach the half that stayed down; lift both in the same
+        /// transform and every face stays planar. Rhino's own MoveEdge works on a selection for
+        /// exactly this reason.
+        /// </summary>
+        private static Brep TranslateComponents(
+            Brep brep, IReadOnlyList<ComponentIndex> components, Vector3d translation, double tolerance,
             string what, List<string> notes)
         {
             var edited = brep.DuplicateBrep();
 
             bool moved = edited.TransformComponent(
-                new[] { component }, Transform.Translation(translation), tolerance, 0.0, false);
+                components, Transform.Translation(translation), tolerance, 0.0, false);
 
             if (!moved)
                 throw new InvalidOperationException(
@@ -569,6 +674,19 @@ namespace RhinoClaude.Services.Semantic
             }
 
             return edited;
+        }
+
+        /// <summary>
+        /// Faces that stopped being planar as a result of an edit. A warped face on a massing
+        /// model is nearly always a mistake — a roof plane that had to twist because only half
+        /// of a ridge moved — and the caller cannot see it in the volume or the bounding box.
+        /// </summary>
+        private static int NonPlanarFaceCount(Brep brep, double tolerance)
+        {
+            int count = 0;
+            for (int i = 0; i < brep.Faces.Count; i++)
+                if (!brep.Faces[i].IsPlanar(tolerance)) count++;
+            return count;
         }
 
         private static void RequireFaceIndex(Brep brep, int faceIndex)
