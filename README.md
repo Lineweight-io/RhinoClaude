@@ -20,6 +20,27 @@ need to know to use it; [`TESTING.md`](TESTING.md) is the smoke-test script.
 > reference, so no test here touches a real document. See **`TESTING.md`** for the smoke-test
 > script to run first.
 
+## Quick install
+
+1. **Download** the latest release from [Releases](https://github.com/Lineweight-io/RhinoClaude/releases/latest)
+2. **Extract** the zip anywhere on your computer
+3. **Drag** `RhinoClaude.rhp` onto an open Rhino window (Rhino 7 or 8)
+4. **Set your API key** — run the Rhino command `ClaudeSetKey` and paste a key from [console.anthropic.com](https://console.anthropic.com), or set the `ANTHROPIC_API_KEY` environment variable
+5. Run the Rhino command `ClaudeChat` to open the docked chat sidebar
+
+You can also use DeepSeek, Qwen, Kimi, Ollama, or any OpenAI-compatible endpoint — configure in the sidebar's settings (gear icon).
+
+## Quick start
+
+Try this as your first prompt:
+> Draw an L-shaped polyline for a house footprint (about 40'x30' with a wing), select it, and ask: "Make a 1-story building from this L footprint, 14 feet tall, with a gable roof."
+
+## Requirements
+
+- Rhino 7 or 8 on Windows
+- .NET Framework 4.8 runtime (installed by default on Windows 10/11)
+- Anthropic API key OR one of the supported alternative providers
+
 ## The semantic layer
 
 Beyond the raw geometry tools, the agent holds a mental model of the design **in the same terms
@@ -146,13 +167,6 @@ component families. The boundary is schematic design — if it wouldn't appear i
 deliverable, the semantic layer doesn't model it, and the raw tools plus the script hatch are
 there for the rest.
 
-## Requirements
-
-- **Rhino 7** (Windows, .NET Framework 4.8) and/or **Rhino 8** (Windows, .NET 7)
-- **.NET SDK 7 or later** (for building)
-- **Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com).
-  Optional if you point the plugin at another provider or a local Ollama; see
-  [Model providers](#model-providers).
 
 ## Project structure
 
@@ -238,7 +252,9 @@ RhinoClaude.sln
 └── RhinoClaude.Tests/               # xunit; links the RhinoCommon-free sources
 ```
 
-## Building
+## Build from source (developers)
+
+Requires the **.NET SDK 7 or later**. Rhino 7 loads the `net48` build; Rhino 8 loads `net7.0`.
 
 ```
 dotnet build RhinoClaude.sln
@@ -259,7 +275,7 @@ compile-only reference, so its types are absent at test runtime; instead the Rhi
 parts of the agent core are linked in as source. Anything listed in that `ItemGroup` must stay
 free of `using Rhino…`.
 
-## Installation
+### Installing a source build
 
 Drag `RhinoClaude/bin/Build/RhinoClaude.rhp` into an open Rhino window, or run `PlugInManager`
 → Install and browse to it. Restart Rhino.
