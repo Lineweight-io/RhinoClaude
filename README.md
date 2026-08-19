@@ -100,9 +100,9 @@ and to believe a screenshot over a semantic result when the two disagree.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tools (66)
+### Tools (67)
 
-**Raw geometry (39)** — the phase 1 set. The semantic tools sit on top of these; the only two
+**Raw geometry (40)** — the phase 1 set. The semantic tools sit on top of these; the only two
 they replace are `move_face` and `move_edge` (see below).
 
 | Group | Tools |
@@ -110,7 +110,7 @@ they replace are `move_face` and `move_edge` (see below).
 | Query | `describe_document`, `list_layers`, `list_objects`, `get_object`, `get_selection`, `list_named_views`, `list_blocks` |
 | Create | `create_point`, `create_line_curve`, `create_arc_curve`, `create_circle`, `create_rectangle`, `create_box` |
 | Transform | `translate_objects`, `rotate_objects`, `scale_objects`, `scale_1d`, `mirror_objects` |
-| Boolean / modify | `boolean_union`, `boolean_difference`, `boolean_intersection`, `offset_curve`, `extrude_curve`, `move_face`, `move_edge`, `delete_objects` |
+| Boolean / modify | `boolean_union`, `boolean_difference`, `boolean_intersection`, `offset_curve`, `extract_footprint_from_curves`, `extrude_curve`, `move_face`, `move_edge`, `delete_objects` |
 | Layer | `ensure_layer`, `assign_objects_to_layer` |
 | Block | `insert_block`, `import_3dm_as_block` |
 | Material | `assign_material` |
@@ -135,7 +135,7 @@ edits instead.
 **Semantic (29)** — 17 read and 12 write. Two of the writes, `move_face` and `move_edge`,
 deliberately keep the raw tools' names: they accept the semantic `{massId, selector}` shape *and*
 the raw `{brepId, index}` one, so registering them last replaces the raw pair with a superset
-rather than leaving the agent two tools with the same job. That is why the registry exposes 66
+rather than leaving the agent two tools with the same job. That is why the registry exposes 67
 distinct tools and not 39 + 29. Switchable off in settings, which gives the agent exactly the
 phase 1 tool set.
 

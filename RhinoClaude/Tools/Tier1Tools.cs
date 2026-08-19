@@ -44,6 +44,7 @@ namespace RhinoClaude.Tools
                 BooleanDifference(mutation),
                 BooleanIntersection(mutation),
                 OffsetCurve(mutation),
+                ExtractFootprintFromCurves(mutation),
                 ExtrudeCurve(mutation),
                 MoveFace(mutation),
                 MoveEdge(mutation),
@@ -397,6 +398,30 @@ namespace RhinoClaude.Tools
             Handler = (input, ct) => ToolResult.Ok(mutation.OffsetCurve(
                 RequireStr(input, "id"), Num(input, "distance", 0),
                 ReadVectorOrNull(input, "normal"), Str(input, "layer")))
+        };
+
+        private static ToolDefinition ExtractFootprintFromCurves(RhinoMutationService mutation) => new ToolDefinition
+        {
+            Name = "extract_footprint_from_curves",
+            Description =
+                "Given a selection of curves/polylines that represent a building outline — typical CAD " +
+                "floor plan linework, with walls, doors and dimensions all mixed together — joins them " +
+                "and extracts the outer closed boundary as a single closed curve. Returns its id, " +
+                "bounds, vertexCount, perimeter and area. Use this before extruding a footprint " +
+                "whenever the user's selection is multiple perimeter curves rather than a single closed " +
+                "polyline. Do NOT use the selection's axis-aligned bounding box as the footprint when " +
+                "this tool is available — that silently turns an L-shaped plan into a rectangle. When " +
+                "several closed loops survive the join, the largest-area one is taken as the outer " +
+                "boundary and 'notes' says so.",
+            InputSchemaJson = @"{
+  ""type"": ""object"",
+  ""required"": [""ids""],
+  ""properties"": {
+    ""ids"": IdList
+  },
+  ""additionalProperties"": false
+}".Replace("IdList", IdList),
+            Handler = (input, ct) => ToolResult.Ok(mutation.ExtractFootprintFromCurves(Ids(input)))
         };
 
         private static ToolDefinition ExtrudeCurve(RhinoMutationService mutation) => new ToolDefinition
