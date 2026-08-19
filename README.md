@@ -100,10 +100,10 @@ and to believe a screenshot over a semantic result when the two disagree.
 - **Semantic tagging** — the existing `RC:` tag system, the Tag Inspector panel, and the
   deterministic `RC*` commands are unchanged.
 
-### Tools (64)
+### Tools (66)
 
-**Raw geometry (39)** — the phase 1 set, unchanged. The semantic tools sit on top of these;
-nothing was replaced.
+**Raw geometry (39)** — the phase 1 set. The semantic tools sit on top of these; the only two
+they replace are `move_face` and `move_edge` (see below).
 
 | Group | Tools |
 |---|---|
@@ -132,9 +132,12 @@ mutation service: Rhino does not put selection or camera changes on the undo sta
 them in undo records would inflate the count that "Revert session" pops and undo real geometry
 edits instead.
 
-**Semantic (25)** — 17 read, 7 massing operations, plus `promote_opening_to_entry`. (The plan
-calls this "24"; its own breakdown of 17 + 7 + 1 is 25.) Switchable off in settings, which gives
-the agent exactly the phase 1 tool set.
+**Semantic (29)** — 17 read and 12 write. Two of the writes, `move_face` and `move_edge`,
+deliberately keep the raw tools' names: they accept the semantic `{massId, selector}` shape *and*
+the raw `{brepId, index}` one, so registering them last replaces the raw pair with a superset
+rather than leaving the agent two tools with the same job. That is why the registry exposes 66
+distinct tools and not 39 + 29. Switchable off in settings, which gives the agent exactly the
+phase 1 tool set.
 
 | Group | Tools |
 |---|---|
