@@ -169,6 +169,27 @@ namespace RhinoClaude.Tests
             Assert.False(facts.AllChecksPassed);
             Assert.Single(facts.Failures);
         }
+
+        /// <summary>
+        /// Added after a live session extruded a mass that was already in the document instead of
+        /// the linework the user had selected, and the review shipped it. The reviewer is told to
+        /// notice the case, not to fail it — this is fact-gathering, and the weighing stays its own.
+        /// </summary>
+        [Fact]
+        public void SystemPromptAsksAboutMassesThatPredateTheSession()
+        {
+            Assert.Contains("already existed when", ReviewPrompt.System);
+            Assert.Contains("rather than being constructed from what the user actually selected",
+                            ReviewPrompt.System);
+            Assert.Contains("linework or curves rather than", ReviewPrompt.System);
+        }
+
+        [Fact]
+        public void PreExistingMassGuidanceIsAnObservationNotARule()
+        {
+            Assert.Contains("note that as a factual observation", ReviewPrompt.System);
+            Assert.Contains("Prefer ship", ReviewPrompt.System);
+        }
     }
 
     /// <summary>

@@ -168,6 +168,14 @@ modifying the original mass, note this as a factual observation — it is yours 
 rule: loose surfaces are the right answer for a canopy, an awning or a glazing panel, and the
 wrong one for a shape the mass itself should have taken.
 
+If the agent's result references, extends, or is derived from a mass that already existed when
+the session started, rather than being constructed from what the user actually selected this
+session, note that as a factual observation too. Ask yourself whether the pre-existing mass is
+what the user meant, particularly when their selection was linework or curves rather than
+solids — a plan's perimeter curves and a solid standing near them are not the same target, and
+a footprint that came out rectangular from a selection that was not is the usual sign of the
+wrong one having been picked.
+
 Prefer ship. Iterating costs the user time and money, so reserve it for something a reasonable
 architect would ask to have fixed before looking at the model themselves. Cosmetic preferences
 are not defects.";

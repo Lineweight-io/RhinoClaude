@@ -61,6 +61,12 @@
     <Compile Include="..\RhinoClaude\Agent\JsonlLogger.cs" Link="Linked\JsonlLogger.cs" />
     <!-- Credential-at-rest encryption: pure BCL, so it belongs under test. -->
     <Compile Include="..\RhinoClaude\Services\Agent\SecretStore.cs" Link="Linked\SecretStore.cs" />
+    <!-- The loop's system prompt and the tag schema it renders. Both are pure string building,
+         and the guidance in the prompt is load bearing enough that an edit dropping a paragraph
+         should fail a test rather than show up as a bad turn weeks later. -->
+    <Compile Include="..\RhinoClaude\Schema\TagSchema.cs" Link="Linked\TagSchema.cs" />
+    <Compile Include="..\RhinoClaude\Schema\BuildingStandards.cs" Link="Linked\BuildingStandards.cs" />
+    <Compile Include="..\RhinoClaude\Agent\SystemPrompt.cs" Link="Linked\SystemPrompt.cs" />
   </ItemGroup>
 
   <!--
