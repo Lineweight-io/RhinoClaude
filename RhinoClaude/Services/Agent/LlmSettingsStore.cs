@@ -31,7 +31,8 @@ namespace RhinoClaude.Services.Agent
                 foreach (var info in LlmProviderCatalog.Providers)
                 {
                     string key = settings.ApiKeyFor(info.Provider);
-                    if (key != null) plugin.Settings.SetString(info.ApiKeySettingsKey, key);
+                    if (key != null)
+                        plugin.Settings.SetString(info.ApiKeySettingsKey, SecretStore.Protect(key));
 
                     plugin.Settings.SetString(LoopModelKey(info.Provider), ModelOf(settings, info.Provider, loop: true));
                     plugin.Settings.SetString(ReviewerModelKey(info.Provider), ModelOf(settings, info.Provider, loop: false));
@@ -59,7 +60,8 @@ namespace RhinoClaude.Services.Agent
             {
                 foreach (var info in LlmProviderCatalog.Providers)
                 {
-                    string key = plugin.Settings.GetString(info.ApiKeySettingsKey, string.Empty);
+                    string key = SecretStore.Unprotect(
+                        plugin.Settings.GetString(info.ApiKeySettingsKey, string.Empty));
                     if (string.IsNullOrWhiteSpace(key) && !string.IsNullOrEmpty(info.ApiKeyEnvironmentVariable))
                         key = Environment.GetEnvironmentVariable(info.ApiKeyEnvironmentVariable);
 
@@ -77,6 +79,20 @@ namespace RhinoClaude.Services.Agent
                 // whichever provider was saved, instead of the Claude defaults.
                 var saved = LlmProviderCatalog.Parse(plugin.Settings.GetString(ProviderKey, string.Empty));
                 settings.SelectProvider(saved);
+
+                // SelectProvider returns early when the saved provider is already the current
+                // one — which is the usual case, because it is the default. On that path the
+                // models remembered just above never reach LoopModel/ReviewerModel, so a model
+                // chosen in the settings dialog came back as the default on the next start.
+                // Applying them here covers the no-switch case without changing what
+                // SelectProvider means for a real switch.
+                if (settings.RememberedLoopModels.TryGetValue(saved, out var savedLoop) &&
+                    !string.IsNullOrWhiteSpace(savedLoop))
+                    settings.LoopModel = savedLoop;
+
+                if (settings.RememberedReviewerModels.TryGetValue(saved, out var savedReviewer) &&
+                    !string.IsNullOrWhiteSpace(savedReviewer))
+                    settings.ReviewerModel = savedReviewer;
             }
             catch (Exception)
             {

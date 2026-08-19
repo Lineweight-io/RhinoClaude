@@ -47,6 +47,8 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
     <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" IncludeAssets="compile" />
     <PackageReference Include="System.Drawing.Common" Version="7.0.0" IncludeAssets="compile" />
+    <!-- DPAPI for the API key at rest. Built into the framework on net48; a package here. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="7.0.1" />
   </ItemGroup>
 
   <!-- Copy DLL to .rhp so Rhino can load it as a plugin -->
@@ -58,6 +60,8 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <Reference Include="System.Net.Http" />
+    <!-- ProtectedData (DPAPI) for the API key at rest. -->
+    <Reference Include="System.Security" />
   </ItemGroup>
 
   <!--

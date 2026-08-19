@@ -44,6 +44,17 @@ namespace RhinoClaude.Agent
         /// </summary>
         public string MassingComposition { get; set; }
 
+        /// <summary>
+        /// The measured bounding box of what the agent left behind, as numbers.
+        ///
+        /// The reviewer was reading dimensions off the screenshots and getting them wrong — on one
+        /// run it reported a "40×30×12 ft" envelope for geometry that actually measured 48×38×16,
+        /// and shipped it. The figures were available the whole time; they just were not in the
+        /// prompt. An overall size is the one fact a picture is worst at and the document is best at.
+        /// Null when nothing survives to measure.
+        /// </summary>
+        public string MeasuredEnvelope { get; set; }
+
         public bool AllChecksPassed => Checks.All(c => c.Passed);
         public IEnumerable<CheckResult> Failures => Checks.Where(c => !c.Passed);
     }
@@ -86,6 +97,41 @@ namespace RhinoClaude.Agent
                 case ReviewVerdict.AskUser: return "ask_user";
                 default: return "unavailable";
             }
+        }
+    }
+
+    /// <summary>
+    /// One review, kept on the session so the export can show it.
+    ///
+    /// A verdict only reaches the transcript when it rides back to the agent through
+    /// signal_done's tool payload. A defensive review has no tool call to ride on, so it
+    /// appeared in the sidebar and then existed nowhere else — sessions shipped with a
+    /// visible SHIP that the exported file had no record of. Recording every review here
+    /// makes the exported conversation a complete account of what was judged.
+    /// </summary>
+    public sealed class ReviewRecord
+    {
+        /// <summary>Review cycle number, or 0 for a defensive mid-turn review.</summary>
+        public int Cycle { get; set; }
+
+        public bool Defensive => Cycle == 0;
+
+        public ReviewVerdict Verdict { get; set; }
+        public string Notes { get; set; }
+        public string QuestionForUser { get; set; }
+        public string ModelId { get; set; }
+
+        public static ReviewRecord From(ReviewOutcome outcome, int cycle)
+        {
+            if (outcome == null) return null;
+            return new ReviewRecord
+            {
+                Cycle = cycle,
+                Verdict = outcome.Verdict,
+                Notes = outcome.Notes,
+                QuestionForUser = outcome.QuestionForUser,
+                ModelId = outcome.ModelId
+            };
         }
     }
 
@@ -166,6 +212,13 @@ are not defects.";
             sb.AppendLine("Layers touched: " + (facts.LayersTouched.Count == 0
                 ? "(none)"
                 : string.Join(", ", facts.LayersTouched.Select(ToolJson.Safe))));
+            if (!string.IsNullOrWhiteSpace(facts.MeasuredEnvelope))
+            {
+                sb.AppendLine("Measured envelope: " + facts.MeasuredEnvelope);
+                sb.AppendLine("These figures are measured from the document and are exact. Where they " +
+                              "disagree with what the screenshots appear to show, they are right and " +
+                              "the image is being misread — state any dimension using these numbers.");
+            }
             sb.AppendLine("</document_facts>");
             sb.AppendLine();
 

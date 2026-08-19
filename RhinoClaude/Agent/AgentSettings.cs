@@ -11,18 +11,17 @@ namespace RhinoClaude.Agent
     public sealed class AgentSettings
     {
         /// <summary>
-        /// Loop model. The plan named Sonnet 4.5, then Sonnet 5; Haiku 4.5 is the current
-        /// default, at $1/$5 per MTok against Sonnet 5's $3/$15 list.
+        /// Loop model. The plan named Sonnet 4.5, then Sonnet 5; Sonnet 5 is the current
+        /// default, at $3/$15 per MTok list against Haiku 4.5's $1/$5.
         ///
-        /// Two things follow from the choice and are handled rather than assumed. Haiku 4.5
-        /// takes neither <c>thinking</c> nor <c>output_config.effort</c> — <see
-        /// cref="ModelCapabilities"/> already omits both, and the settings gear greys them
-        /// out — so the <see cref="Effort"/> and <see cref="ShowThinking"/> values below are
-        /// simply inert while this model is selected. And its context window is 200K rather
-        /// than Sonnet 5's 1M, which is the one place a busy document could now hit a wall
-        /// that it would not have before.
+        /// The trade runs the other way from Haiku. Sonnet 5 takes both <c>thinking</c> and
+        /// <c>output_config.effort</c> — <see cref="ModelCapabilities"/> sends both, and the
+        /// settings gear no longer greys them out — so the <see cref="Effort"/> and <see
+        /// cref="ShowThinking"/> values below are live rather than inert. Its context window
+        /// is 1M rather than Haiku's 200K, which lifts the one wall a busy document could
+        /// previously hit.
         /// </summary>
-        public const string DefaultLoopModel = "claude-haiku-4-5-20251001";
+        public const string DefaultLoopModel = "claude-sonnet-5";
 
         /// <summary>
         /// Self-review model (plan §8.1 chose Opus 5). A second opinion is worth more from a

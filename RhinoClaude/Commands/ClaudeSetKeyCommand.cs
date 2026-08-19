@@ -36,8 +36,10 @@ namespace RhinoClaude.Commands
                 RhinoApp.WriteLine("RhinoClaude: Warning — key doesn't start with 'sk-ant-'. Saving anyway.");
             }
 
-            // Save to plugin settings (persists across sessions)
-            plugin.Settings.SetString("AnthropicApiKey", apiKey);
+            // Save to plugin settings (persists across sessions), encrypted at rest so the
+            // settings file is not itself a usable credential.
+            plugin.Settings.SetString("AnthropicApiKey",
+                RhinoClaude.Services.Agent.SecretStore.Protect(apiKey));
             plugin.AnthropicClient.SetApiKey(apiKey);
 
             RhinoApp.WriteLine("RhinoClaude: API key saved successfully.");

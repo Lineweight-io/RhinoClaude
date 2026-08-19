@@ -39,7 +39,8 @@ namespace RhinoClaude
             TagService = new TagService();
 
             // Try plugin settings first, then the environment variable.
-            string savedKey = Settings.GetString("AnthropicApiKey", string.Empty);
+            string savedKey = RhinoClaude.Services.Agent.SecretStore.Unprotect(
+                Settings.GetString("AnthropicApiKey", string.Empty));
             if (!string.IsNullOrEmpty(savedKey))
             {
                 AnthropicClient.SetApiKey(savedKey);

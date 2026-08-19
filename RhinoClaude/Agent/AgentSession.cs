@@ -110,6 +110,13 @@ namespace RhinoClaude.Agent
         /// <summary>Review cycles used in the current turn (plan §5.5 caps this).</summary>
         public int ReviewCycles { get; private set; }
 
+        /// <summary>
+        /// Every review this session ran, in order, across all turns. Kept here because the
+        /// observer callback only reaches the live panel: a defensive review never enters
+        /// Messages, so without this the exported conversation had no record it happened.
+        /// </summary>
+        public List<ReviewRecord> Reviews { get; } = new List<ReviewRecord>();
+
         /// <summary>First user turn, truncated — the session dropdown's label.</summary>
         public string DisplayName { get; private set; } = "New session";
 
@@ -428,6 +435,7 @@ namespace RhinoClaude.Agent
                     Observer?.OnBudgetChanged(CurrentBudget);
                 }
 
+                Reviews.Add(ReviewRecord.From(outcome, 0));
                 Observer?.OnReviewCompleted(outcome, 0);
 
                 if (outcome.Verdict == ReviewVerdict.Ship || outcome.Verdict == ReviewVerdict.Unavailable)
@@ -493,6 +501,10 @@ namespace RhinoClaude.Agent
                 outcome.Notes = (outcome.Notes ?? string.Empty) +
                     " (Review cycle cap of " + Settings.MaxReviewCycles + " reached, so this became a question.)";
             }
+
+            // Recorded after the cap conversion above, so the stored verdict is the one that
+            // actually took effect rather than the one the reviewer first returned.
+            Reviews.Add(ReviewRecord.From(outcome, ReviewCycles));
 
             invocation.Result = ToolResult.Ok(outcome.ToToolPayload());
 

@@ -144,8 +144,8 @@ namespace RhinoClaude.Agent
                 // AgentSettings.DefaultLoopModel or the dropdown opens with nothing selected.
                 KnownModels = new[]
                 {
-                    new LlmModelOption(AgentSettings.DefaultLoopModel, "Claude Haiku 4.5 (default)"),
-                    new LlmModelOption("claude-sonnet-5", "Claude Sonnet 5"),
+                    new LlmModelOption("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+                    new LlmModelOption(AgentSettings.DefaultLoopModel, "Claude Sonnet 5 (default)"),
                     new LlmModelOption("claude-sonnet-4-6", "Claude Sonnet 4.6"),
                     new LlmModelOption("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (legacy)"),
                     new LlmModelOption("claude-opus-5", "Claude Opus 5"),

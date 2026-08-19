@@ -68,6 +68,7 @@ namespace RhinoClaude.Agent
         {
             Rate("claude-sonnet-4-5", 3.00, 15.00),
             Rate("claude-sonnet-4-6", 3.00, 15.00),
+            // The default loop model, so these are the rates almost every turn is billed at.
             // Sonnet 5 is on introductory pricing through 2026-08-31, after which it reverts
             // to the $3/$15 list rate. Encoded with its end date rather than assumed either
             // way: charging list today over-reports every Sonnet 5 turn by 50%.
@@ -75,7 +76,6 @@ namespace RhinoClaude.Agent
                                                    introThroughUtc: new DateTime(2026, 8, 31)),
             Rate("claude-opus-4",     5.00, 25.00),
             Rate("claude-opus-5",     5.00, 25.00),
-            // The default loop model, so these are the rates almost every turn is billed at.
             // List price with no promotional period — cache write $1.25, cache read $0.10.
             Rate("claude-haiku-4-5",  1.00,  5.00),
             Rate("claude-fable-5",   10.00, 50.00),
